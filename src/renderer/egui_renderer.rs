@@ -35,7 +35,7 @@ struct Texture {
     pub options: Option<epaint::textures::TextureOptions>,
 }
 
-pub struct UiRenderer {
+pub struct EguiRenderer {
     pipeline: wgpu::RenderPipeline,
 
     index_buffer: SlicedBuffer,
@@ -57,15 +57,15 @@ pub struct UiRenderer {
     pub callback_resources: CallbackResources,
 }
 
-impl UiRenderer {
+impl EguiRenderer {
     pub fn new(device: &wgpu::Device, output_color_format: wgpu::TextureFormat) -> Self {
         let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("ui"),
-            source: wgpu::ShaderSource::Wgsl(Cow::Borrowed(include_str!("ui.wgsl"))),
+            source: wgpu::ShaderSource::Wgsl(Cow::Borrowed(include_str!("egui.wgsl"))),
         });
 
         let uniform_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("ui_uniform_buffer"),
+            label: Some("egui_uniform_buffer"),
             contents: bytemuck::cast_slice(&[UniformBuffer {
                 screen_size_in_points: [0.0, 0.0],
                 dithering: u32::from(true),
@@ -76,7 +76,7 @@ impl UiRenderer {
 
         let uniform_bind_group_layout =
             device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                label: Some("ui_uniform_bind_group_layout"),
+                label: Some("egui_uniform_bind_group_layout"),
                 entries: &[wgpu::BindGroupLayoutEntry {
                     binding: 0,
                     visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
@@ -104,7 +104,7 @@ impl UiRenderer {
 
         let texture_bind_group_layout =
             device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                label: Some("ui_texture_bind_group_layout"),
+                label: Some("egui_texture_bind_group_layout"),
                 entries: &[
                     wgpu::BindGroupLayoutEntry {
                         binding: 0,
@@ -126,7 +126,7 @@ impl UiRenderer {
             });
 
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("ui_pipeline_layout"),
+            label: Some("egui_pipeline_layout"),
             bind_group_layouts: &[&uniform_bind_group_layout, &texture_bind_group_layout],
             immediate_size: 0,
         });
@@ -247,7 +247,7 @@ impl UiRenderer {
         &self,
         render_pass: &mut wgpu::RenderPass<'static>,
         paint_jobs: &[epaint::ClippedPrimitive],
-        screen_descriptor: &ScreenDescriptor,
+        screen_descriptor: EguiScreen,
     ) {
         let pixels_per_point = screen_descriptor.pixels_per_point;
         let size_in_pixels = screen_descriptor.size_in_pixels;
@@ -645,7 +645,7 @@ impl UiRenderer {
         queue: &wgpu::Queue,
         encoder: &mut wgpu::CommandEncoder,
         paint_jobs: &[epaint::ClippedPrimitive],
-        screen_descriptor: &ScreenDescriptor,
+        screen_descriptor: &EguiScreen,
     ) -> Vec<wgpu::CommandBuffer> {
         let screen_size_in_points = screen_descriptor.screen_size_in_points();
 
@@ -808,7 +808,7 @@ fn create_sampler(
     };
     device.create_sampler(&wgpu::SamplerDescriptor {
         label: Some(&format!(
-            "egui sampler (mag: {mag_filter:?}, min {min_filter:?})"
+            "ui sampler (mag: {mag_filter:?}, min {min_filter:?})"
         )),
         mag_filter,
         min_filter,
@@ -945,7 +945,7 @@ pub trait CallbackTrait: Send + Sync {
         &self,
         _device: &wgpu::Device,
         _queue: &wgpu::Queue,
-        _screen_descriptor: &ScreenDescriptor,
+        _screen_descriptor: &EguiScreen,
         _egui_encoder: &mut wgpu::CommandEncoder,
         _callback_resources: &mut CallbackResources,
     ) -> Vec<wgpu::CommandBuffer> {
@@ -975,8 +975,9 @@ pub trait CallbackTrait: Send + Sync {
     );
 }
 
+#[derive(Clone, Copy)]
 /// Information about the screen used for rendering.
-pub struct ScreenDescriptor {
+pub struct EguiScreen {
     /// Size of the window in physical pixels.
     pub size_in_pixels: [u32; 2],
 
@@ -984,7 +985,7 @@ pub struct ScreenDescriptor {
     pub pixels_per_point: f32,
 }
 
-impl ScreenDescriptor {
+impl EguiScreen {
     /// size in "logical" points
     fn screen_size_in_points(&self) -> [f32; 2] {
         [
