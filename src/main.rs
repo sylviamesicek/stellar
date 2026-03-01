@@ -9,12 +9,14 @@ use winit::keyboard::{KeyCode, PhysicalKey};
 use winit::window::{Theme, Window, WindowId};
 
 pub mod app;
+pub mod camera;
+pub mod math;
 pub mod misc;
 pub mod renderer;
 pub mod toolkit;
 
 use crate::app::App;
-use crate::renderer::{EguiScreen, Graphics, Renderer};
+use crate::renderer::{Graphics, Renderer, UiScreen};
 
 fn main() -> eyre::Result<()> {
     // Initialize pretty error handling
@@ -168,15 +170,17 @@ impl ApplicationHandler for Framework {
                 let delta_time = now - *last_render_time;
                 *last_render_time = now;
 
+                // Get size of available screen
+                let (width, height) = *last_size;
+
                 // Handle Ui Events
                 let ui_input = ui_state.take_egui_input(window);
                 // Build Ui
                 let ctx = ui_state.egui_ctx();
-
                 ctx.begin_pass(ui_input);
 
                 // Run App logic
-                app.update(world, ctx.clone(), delta_time);
+                app.update(world, ctx.clone(), [width, height], delta_time);
 
                 // End Building UI
                 let egui::FullOutput {
@@ -191,7 +195,7 @@ impl ApplicationHandler for Framework {
                 let paint_jobs = ui_state.egui_ctx().tessellate(shapes, pixels_per_point);
 
                 // Perform rendering
-                let (width, height) = *last_size;
+
                 if width == 0 || height == 0 {
                     // Short circuit if surface is minimized
                     return;
@@ -230,7 +234,7 @@ impl ApplicationHandler for Framework {
                 // Perform rendering
                 renderer.prepare_ui(
                     gfx,
-                    EguiScreen {
+                    UiScreen {
                         size_in_pixels: [width, height],
                         pixels_per_point,
                     },
@@ -238,7 +242,7 @@ impl ApplicationHandler for Framework {
                     &paint_jobs,
                     &mut encoder,
                 );
-                renderer.render_frame(gfx, &surface_view, &world, &mut encoder);
+                renderer.render_frame(gfx, &surface_view, world, &mut encoder);
                 // Submit command encoder
                 gfx.queue.submit(std::iter::once(encoder.finish()));
                 surface_texture.present();

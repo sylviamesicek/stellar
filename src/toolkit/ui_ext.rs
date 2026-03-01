@@ -1,10 +1,11 @@
-use std::hash::Hash;
+// use std::hash::Hash;
 
-use egui::emath::{GuiRounding as _, Rot2};
-use egui::{
-    CollapsingResponse, Color32, IntoAtoms, NumExt as _, Rangef, Rect, StrokeKind, Widget as _,
-    WidgetInfo, WidgetText, pos2,
-};
+// use egui::emath::{GuiRounding as _, Rot2};
+// use egui::{
+//     CollapsingResponse, Color32, IntoAtoms, NumExt as _, Rangef, Rect, StrokeKind, Widget as _,
+//     WidgetInfo, WidgetText, pos2,
+// };
+use egui::IntoAtoms;
 
 // use crate::alert::Alert;
 use super::button::Button;
@@ -12,11 +13,11 @@ use super::design_tokens::DesignTokens;
 // use crate::list_item::{self, LabelContent};
 // use crate::{ContextExt as _, DesignTokens, Icon, LabelStyle, icons};
 
-static FULL_SPAN_TAG: &str = "rerun_full_span";
+// static FULL_SPAN_TAG: &str = "rerun_full_span";
 
-fn error_label_bg_color(fg_color: Color32) -> Color32 {
-    fg_color.gamma_multiply(0.35)
-}
+// fn error_label_bg_color(fg_color: Color32) -> Color32 {
+//     fg_color.gamma_multiply(0.35)
+// }
 
 /// Rerun custom extensions to [`egui::Ui`].
 pub trait UiExt {

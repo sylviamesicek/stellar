@@ -1,16 +1,26 @@
-mod graphics;
-mod ui;
+use std::collections::HashMap;
 
+use crate::camera::Camera;
+use hecs::Entity;
+use smallvec::SmallVec;
 use ui::UiRenderer;
 
+mod graphics;
+mod stack;
+mod ui;
+
 pub use graphics::Graphics;
-pub use ui::EguiScreen;
+use stack::RenderStack;
+pub use ui::{UiCallback, UiScreen};
 
 pub struct Renderer {
     ui: UiRenderer,
+    // Render stacks associated with each camera
+    stacks: HashMap<hecs::Entity, RenderStack>,
+
     // Temporary state
     paint_jobs: Vec<egui::ClippedPrimitive>,
-    screen: EguiScreen,
+    screen: UiScreen,
 }
 
 impl Renderer {
@@ -19,8 +29,9 @@ impl Renderer {
 
         Self {
             ui,
+            stacks: HashMap::new(),
             paint_jobs: vec![],
-            screen: EguiScreen {
+            screen: UiScreen {
                 size_in_pixels: [0, 0],
                 pixels_per_point: 0.0,
             },
@@ -32,22 +43,20 @@ impl Renderer {
     pub fn prepare_ui(
         &mut self,
         gfx: &Graphics,
-        screen: EguiScreen,
+        screen: UiScreen,
         textures_delta: &egui::TexturesDelta,
         paint_jobs: &[egui::ClippedPrimitive],
         encoder: &mut wgpu::CommandEncoder,
     ) {
         for (id, image_delta) in &textures_delta.set {
-            self.ui
-                .update_texture(&gfx.device, &gfx.queue, *id, image_delta);
+            self.ui.update_texture(gfx, *id, image_delta);
         }
 
         for id in &textures_delta.free {
             self.ui.free_texture(id);
         }
 
-        self.ui
-            .update_buffers(&gfx.device, &gfx.queue, encoder, &paint_jobs, &screen);
+        self.ui.update_buffers(&gfx, encoder, &paint_jobs, &screen);
 
         self.paint_jobs.clear();
         self.paint_jobs.extend_from_slice(paint_jobs);
@@ -56,12 +65,47 @@ impl Renderer {
 
     pub fn render_frame(
         &mut self,
-        _gfx: &Graphics,
+        gfx: &Graphics,
         surface_view: &wgpu::TextureView,
-        _world: &hecs::World,
+        world: &mut hecs::World,
         encoder: &mut wgpu::CommandEncoder,
     ) {
-        // Begin render pass
+        // **************************************
+        // Camera Render Passes
+
+        // Remove any stacks that no longer exist
+        let mut remove_list = SmallVec::<[Entity; 4]>::new();
+        for &e in self.stacks.keys() {
+            if !world.contains(e) {
+                remove_list.push(e);
+            }
+        }
+
+        for e in remove_list {
+            self.stacks.remove(&e);
+        }
+
+        // Update any existing stacks
+        for (e, camera) in world.query_mut::<(Entity, &Camera)>() {
+            let stack = self
+                .stacks
+                .entry(e)
+                .or_insert_with(|| RenderStack::new(gfx, camera.physical_size));
+
+            if camera.physical_size != stack.physical_size {
+                stack.resize(gfx, camera.physical_size);
+            }
+        }
+
+        // Render stacks
+        for stack in self.stacks.values_mut() {
+            stack.render(gfx, world, encoder);
+        }
+
+        // ******************************************
+        // Composite Renderpass
+
+        // Final render pass (ui and all composited viewports)
         let mut render_pass = encoder
             .begin_render_pass(&wgpu::RenderPassDescriptor {
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
@@ -82,10 +126,57 @@ impl Renderer {
                 ..Default::default()
             })
             .forget_lifetime();
+
+        // Make sure there is not some mistake
+        assert!(
+            !self
+                .ui
+                .callback_resources
+                .contains::<RendererCallbackResources>()
+        );
+        // Insert stacks into typemap
+        let resources = RendererCallbackResources {
+            stacks: std::mem::take(&mut self.stacks),
+        };
+        self.ui.callback_resources.insert(resources);
+        // Draw composite UI
         self.ui
             .draw(&mut render_pass, &self.paint_jobs, self.screen);
+        // Retrieve stacks from typemap
+        let resources = self
+            .ui
+            .callback_resources
+            .remove::<RendererCallbackResources>()
+            .unwrap();
+        self.stacks = resources.stacks;
+        // End render pass
         drop(render_pass);
+    }
+}
 
-        // drop(render_pass);
+struct RendererCallbackResources {
+    stacks: HashMap<hecs::Entity, RenderStack>,
+}
+
+pub struct DrawCameraCallback {
+    camera: hecs::Entity,
+}
+
+impl DrawCameraCallback {
+    pub fn new(camera: hecs::Entity) -> Self {
+        Self { camera }
+    }
+}
+
+impl ui::UiCallbackTrait for DrawCameraCallback {
+    fn paint(
+        &self,
+        _info: egui::PaintCallbackInfo,
+        render_pass: &mut wgpu::RenderPass<'static>,
+        resources: &ui::UiCallbackResources,
+    ) {
+        let resources: &RendererCallbackResources = resources.get().unwrap();
+        let stack = resources.stacks.get(&self.camera).unwrap();
+        stack.draw_composite(render_pass);
     }
 }

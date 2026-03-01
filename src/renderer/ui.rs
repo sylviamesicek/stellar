@@ -7,6 +7,28 @@ use egui::{
 use std::{borrow::Cow, num::NonZeroU64, ops::Range};
 use wgpu::util::DeviceExt;
 
+use crate::renderer::Graphics;
+
+#[derive(Clone, Copy)]
+/// Information about the screen used for rendering.
+pub struct UiScreen {
+    /// Size of the window in physical pixels.
+    pub size_in_pixels: [u32; 2],
+
+    /// High-DPI scale factor (pixels per point).
+    pub pixels_per_point: f32,
+}
+
+impl UiScreen {
+    /// size in "logical" points
+    fn screen_size_in_points(&self) -> [f32; 2] {
+        [
+            self.size_in_pixels[0] as f32 / self.pixels_per_point,
+            self.size_in_pixels[1] as f32 / self.pixels_per_point,
+        ]
+    }
+}
+
 /// Uniform buffer used when rendering.
 #[derive(Clone, Copy, Debug, PartialEq, bytemuck::Pod, bytemuck::Zeroable)]
 #[repr(C)]
@@ -54,14 +76,14 @@ pub struct UiRenderer {
     /// Storage for resources shared with all invocations of [`CallbackTrait`]'s methods.
     ///
     /// See also [`CallbackTrait`].
-    pub callback_resources: CallbackResources,
+    pub callback_resources: UiCallbackResources,
 }
 
 impl UiRenderer {
     pub fn new(device: &wgpu::Device, output_color_format: wgpu::TextureFormat) -> Self {
         let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("ui"),
-            source: wgpu::ShaderSource::Wgsl(Cow::Borrowed(include_str!("ui.wgsl"))),
+            source: wgpu::ShaderSource::Wgsl(Cow::Borrowed(include_str!("shaders/ui.wgsl"))),
         });
 
         let uniform_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -232,7 +254,7 @@ impl UiRenderer {
             textures: HashMap::default(),
             next_user_texture_id: 0,
             samplers: HashMap::default(),
-            callback_resources: CallbackResources::default(),
+            callback_resources: UiCallbackResources::default(),
         }
     }
 
@@ -247,10 +269,10 @@ impl UiRenderer {
         &self,
         render_pass: &mut wgpu::RenderPass<'static>,
         paint_jobs: &[epaint::ClippedPrimitive],
-        screen_descriptor: EguiScreen,
+        screen: UiScreen,
     ) {
-        let pixels_per_point = screen_descriptor.pixels_per_point;
-        let size_in_pixels = screen_descriptor.size_in_pixels;
+        let pixels_per_point = screen.pixels_per_point;
+        let size_in_pixels = screen.size_in_pixels;
 
         // Whether or not we need to reset the render pass because a paint callback has just
         // run.
@@ -319,7 +341,7 @@ impl UiRenderer {
                     }
                 }
                 Primitive::Callback(callback) => {
-                    let Some(cbfn) = callback.callback.downcast_ref::<Callback>() else {
+                    let Some(cbfn) = callback.callback.downcast_ref::<UiCallback>() else {
                         // We already warned in the `prepare` callback
                         continue;
                     };
@@ -364,8 +386,7 @@ impl UiRenderer {
     /// Should be called before [`Self::render`].
     pub fn update_texture(
         &mut self,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
+        gfx: &Graphics,
         id: epaint::TextureId,
         image_delta: &epaint::ImageDelta,
     ) {
@@ -391,7 +412,7 @@ impl UiRenderer {
         let data_bytes: &[u8] = bytemuck::cast_slice(data_color32.as_slice());
 
         let queue_write_data_to_texture = |texture, origin| {
-            queue.write_texture(
+            gfx.queue.write_texture(
                 wgpu::TexelCopyTextureInfo {
                     texture,
                     mip_level: 0,
@@ -443,7 +464,7 @@ impl UiRenderer {
             )
         } else {
             // allocate a new texture
-            let texture = device.create_texture(&wgpu::TextureDescriptor {
+            let texture = gfx.device.create_texture(&wgpu::TextureDescriptor {
                 label,
                 size,
                 mip_level_count: 1,
@@ -461,8 +482,8 @@ impl UiRenderer {
             let sampler = self
                 .samplers
                 .entry(image_delta.options)
-                .or_insert_with(|| create_sampler(image_delta.options, device));
-            device.create_bind_group(&wgpu::BindGroupDescriptor {
+                .or_insert_with(|| create_sampler(image_delta.options, &gfx.device));
+            gfx.device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label,
                 layout: &self.texture_bind_group_layout,
                 entries: &[
@@ -641,13 +662,12 @@ impl UiRenderer {
     /// Returns all user-defined command buffers gathered from [`CallbackTrait::prepare`] & [`CallbackTrait::finish_prepare`] callbacks.
     pub fn update_buffers(
         &mut self,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
+        gfx: &Graphics,
         encoder: &mut wgpu::CommandEncoder,
         paint_jobs: &[epaint::ClippedPrimitive],
-        screen_descriptor: &EguiScreen,
+        screen: &UiScreen,
     ) -> Vec<wgpu::CommandBuffer> {
-        let screen_size_in_points = screen_descriptor.screen_size_in_points();
+        let screen_size_in_points = screen.screen_size_in_points();
 
         let uniform_buffer_content = UniformBuffer {
             screen_size_in_points,
@@ -655,7 +675,7 @@ impl UiRenderer {
             predictable_texture_filtering: u32::from(false),
         };
         if uniform_buffer_content != self.previous_uniform_buffer_content {
-            queue.write_buffer(
+            gfx.queue.write_buffer(
                 &self.uniform_buffer,
                 0,
                 bytemuck::cast_slice(&[uniform_buffer_content]),
@@ -672,7 +692,7 @@ impl UiRenderer {
                         (acc.0 + mesh.vertices.len(), acc.1 + mesh.indices.len())
                     }
                     Primitive::Callback(callback) => {
-                        if let Some(c) = callback.callback.downcast_ref::<Callback>() {
+                        if let Some(c) = callback.callback.downcast_ref::<UiCallback>() {
                             callbacks.push(c.0.as_ref());
                         } else {
                             log::warn!("Unknown paint callback: expected `ui::Callback`");
@@ -691,10 +711,11 @@ impl UiRenderer {
                 // Resize index buffer if needed.
                 self.index_buffer.capacity =
                     (self.index_buffer.capacity * 2).at_least(required_index_buffer_size);
-                self.index_buffer.buffer = create_index_buffer(device, self.index_buffer.capacity);
+                self.index_buffer.buffer =
+                    create_index_buffer(&gfx.device, self.index_buffer.capacity);
             }
 
-            let index_buffer_staging = queue.write_buffer_with(
+            let index_buffer_staging = gfx.queue.write_buffer_with(
                 &self.index_buffer.buffer,
                 0,
                 NonZeroU64::new(required_index_buffer_size).unwrap(),
@@ -733,10 +754,10 @@ impl UiRenderer {
                 self.vertex_buffer.capacity =
                     (self.vertex_buffer.capacity * 2).at_least(required_vertex_buffer_size);
                 self.vertex_buffer.buffer =
-                    create_vertex_buffer(device, self.vertex_buffer.capacity);
+                    create_vertex_buffer(&gfx.device, self.vertex_buffer.capacity);
             }
 
-            let vertex_buffer_staging = queue.write_buffer_with(
+            let vertex_buffer_staging = gfx.queue.write_buffer_with(
                 &self.vertex_buffer.buffer,
                 0,
                 NonZeroU64::new(required_vertex_buffer_size).unwrap(),
@@ -769,17 +790,15 @@ impl UiRenderer {
         let mut user_cmd_bufs = Vec::new();
         for callback in &callbacks {
             user_cmd_bufs.extend(callback.prepare(
-                device,
-                queue,
-                screen_descriptor,
+                gfx,
+                screen,
                 encoder,
                 &mut self.callback_resources,
             ));
         }
         for callback in &callbacks {
             user_cmd_bufs.extend(callback.finish_prepare(
-                device,
-                queue,
+                gfx,
                 encoder,
                 &mut self.callback_resources,
             ));
@@ -874,20 +893,20 @@ impl ScissorRect {
 }
 
 /// You can use this for storage when implementing [`CallbackTrait`].
-pub type CallbackResources = type_map::concurrent::TypeMap;
+pub type UiCallbackResources = type_map::concurrent::TypeMap;
 
 /// You can use this to do custom [`wgpu`] rendering in an egui app.
 ///
 /// Implement [`CallbackTrait`] and call [`Callback::new_paint_callback`].
 ///
 /// This can be turned into a [`epaint::PaintCallback`] and [`epaint::Shape`].
-pub struct Callback(Box<dyn CallbackTrait>);
+pub struct UiCallback(Box<dyn UiCallbackTrait>);
 
-impl Callback {
+impl UiCallback {
     /// Creates a new [`epaint::PaintCallback`] from a callback trait instance.
     pub fn new_paint_callback(
         rect: epaint::emath::Rect,
-        callback: impl CallbackTrait + 'static,
+        callback: impl UiCallbackTrait + 'static,
     ) -> epaint::PaintCallback {
         epaint::PaintCallback {
             rect,
@@ -940,30 +959,28 @@ impl Callback {
 /// # Example
 ///
 /// See the [`custom3d_wgpu`](https://github.com/emilk/egui/blob/main/crates/egui_demo_app/src/apps/custom3d_wgpu.rs) demo source for a detailed usage example.
-pub trait CallbackTrait: Send + Sync {
+pub trait UiCallbackTrait: Send + Sync {
     fn prepare(
         &self,
-        _device: &wgpu::Device,
-        _queue: &wgpu::Queue,
-        _screen_descriptor: &EguiScreen,
+        _gfx: &Graphics,
+        _screen_descriptor: &UiScreen,
         _egui_encoder: &mut wgpu::CommandEncoder,
-        _callback_resources: &mut CallbackResources,
+        _callback_resources: &mut UiCallbackResources,
     ) -> Vec<wgpu::CommandBuffer> {
         Vec::new()
     }
 
-    /// Called after all [`CallbackTrait::prepare`] calls are done.
+    /// Called after all [`UiCallbackTrait::prepare`] calls are done.
     fn finish_prepare(
         &self,
-        _device: &wgpu::Device,
-        _queue: &wgpu::Queue,
+        _gfx: &Graphics,
         _egui_encoder: &mut wgpu::CommandEncoder,
-        _callback_resources: &mut CallbackResources,
+        _callback_resources: &mut UiCallbackResources,
     ) -> Vec<wgpu::CommandBuffer> {
         Vec::new()
     }
 
-    /// Called after all [`CallbackTrait::finish_prepare`] calls are done.
+    /// Called after all [`UiCallbackTrait::finish_prepare`] calls are done.
     ///
     /// It is given access to the [`wgpu::RenderPass`] so that it can issue draw commands
     /// into the same [`wgpu::RenderPass`] that is used for all other egui elements.
@@ -971,26 +988,6 @@ pub trait CallbackTrait: Send + Sync {
         &self,
         info: PaintCallbackInfo,
         render_pass: &mut wgpu::RenderPass<'static>,
-        callback_resources: &CallbackResources,
+        callback_resources: &UiCallbackResources,
     );
-}
-
-#[derive(Clone, Copy)]
-/// Information about the screen used for rendering.
-pub struct EguiScreen {
-    /// Size of the window in physical pixels.
-    pub size_in_pixels: [u32; 2],
-
-    /// High-DPI scale factor (pixels per point).
-    pub pixels_per_point: f32,
-}
-
-impl EguiScreen {
-    /// size in "logical" points
-    fn screen_size_in_points(&self) -> [f32; 2] {
-        [
-            self.size_in_pixels[0] as f32 / self.pixels_per_point,
-            self.size_in_pixels[1] as f32 / self.pixels_per_point,
-        ]
-    }
 }

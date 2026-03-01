@@ -48,6 +48,13 @@ impl Graphics {
             .find(|f| !f.is_srgb())
             .unwrap_or(surface_capabilities.formats[0]);
 
+        // Temporary
+        if surface_format.is_srgb() {
+            panic!("SRGB render target currently not supported (see tonemap.frag.wgsl)!")
+        }
+
+        log::info!("Surface format: {:?}", surface_format);
+
         let surface_config = wgpu::SurfaceConfiguration {
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
             format: surface_format,

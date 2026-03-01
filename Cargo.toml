@@ -4,6 +4,8 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+bevy_math = { version = "0.18" }
+bevy_transform = { version = "0.18", default-features = false }
 bytemuck = "1.25.0"
 color-eyre = "0.6.5"
 egui = { version = "0.33.3", features = ["bytemuck"] }
@@ -11,11 +13,12 @@ egui-winit = "0.33.3"
 egui_extras = "0.33.3"
 env_logger = "0.11.9"
 eyre = "0.6.12"
-hecs = "0.11.0"
+hecs = { version = "0.11.0", features = ["macros"] }
 log = "0.4.29"
 pollster = "0.4.0"
 ron = "0.12.0"
 serde = { version = "1.0.228", features = ["derive"] }
+smallvec = "1.15.1"
 strum = { version = "0.28.0", features = ["derive"] }
 type-map = "0.5.1"
 wgpu = "28.0.0"

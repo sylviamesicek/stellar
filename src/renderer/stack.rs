@@ -1,0 +1,250 @@
+use std::borrow::Cow;
+
+use wgpu::{
+    AddressMode, BindGroupDescriptor, BindGroupEntry, BindGroupLayout, BindGroupLayoutDescriptor,
+    BindGroupLayoutEntry, BindingResource, BindingType, BlendState, ColorTargetState, ColorWrites,
+    FilterMode, FragmentState, MipmapFilterMode, MultisampleState, PipelineCompilationOptions,
+    PipelineLayoutDescriptor, PrimitiveState, RenderPass, RenderPipeline, RenderPipelineDescriptor,
+    Sampler, SamplerBindingType, SamplerDescriptor, ShaderModuleDescriptor, ShaderSource,
+    ShaderStages, TextureSampleType, TextureView, TextureViewDescriptor, TextureViewDimension,
+    VertexState,
+};
+
+use super::Graphics;
+
+const HDR_COLOR_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
+
+#[derive(Debug)]
+pub struct RenderStack {
+    pub physical_size: [u32; 2],
+
+    hdr_bind_group_layout: BindGroupLayout,
+
+    fullscreen_shader: wgpu::ShaderModule,
+    composite_pipeline: wgpu::RenderPipeline,
+
+    // HDR color texture (primary render target)
+    hdr_color: wgpu::Texture,
+    hdr_color_view: TextureView,
+    hdr_sampler: wgpu::Sampler,
+    hdr_bind_group: wgpu::BindGroup,
+}
+
+impl RenderStack {
+    pub fn new(gfx: &Graphics, physical_size: [u32; 2]) -> Self {
+        let hdr_color = create_hdr_color(gfx, physical_size[0], physical_size[1]);
+        let hdr_color_view = create_hdr_color_view(&hdr_color);
+        let hdr_sampler = create_hdr_sampler(gfx);
+
+        let hdr_bind_group_layout =
+            gfx.device
+                .create_bind_group_layout(&BindGroupLayoutDescriptor {
+                    label: Some("hdr_bind_group_layout"),
+                    entries: &[
+                        BindGroupLayoutEntry {
+                            binding: 0,
+                            visibility: ShaderStages::FRAGMENT,
+                            ty: BindingType::Texture {
+                                sample_type: TextureSampleType::Float { filterable: true },
+                                view_dimension: TextureViewDimension::D2,
+                                multisampled: false,
+                            },
+                            count: None,
+                        },
+                        BindGroupLayoutEntry {
+                            binding: 1,
+                            visibility: ShaderStages::FRAGMENT,
+                            ty: BindingType::Sampler(SamplerBindingType::Filtering),
+                            count: None,
+                        },
+                    ],
+                });
+
+        let hdr_bind_group =
+            create_hdr_bind_group(gfx, &hdr_bind_group_layout, &hdr_color_view, &hdr_sampler);
+
+        let fullscreen_shader = gfx.device.create_shader_module(ShaderModuleDescriptor {
+            label: Some("fullscreen.vert.wgsl"),
+            source: ShaderSource::Wgsl(Cow::Borrowed(include_str!("shaders/fullscreen.vert.wgsl"))),
+        });
+
+        let composite_shader = gfx.device.create_shader_module(ShaderModuleDescriptor {
+            label: Some("composite.frag.wgsl"),
+            source: ShaderSource::Wgsl(Cow::Borrowed(include_str!("shaders/composite.frag.wgsl"))),
+        });
+
+        let composite_pipeline_layout =
+            gfx.device
+                .create_pipeline_layout(&PipelineLayoutDescriptor {
+                    label: None,
+                    bind_group_layouts: &[&hdr_bind_group_layout],
+                    immediate_size: 0,
+                });
+
+        let composite_pipeline = gfx
+            .device
+            .create_render_pipeline(&RenderPipelineDescriptor {
+                label: Some("tonemap_pipeline"),
+                layout: Some(&composite_pipeline_layout),
+                vertex: VertexState {
+                    module: &fullscreen_shader,
+                    entry_point: Some("vs_main"),
+                    compilation_options: PipelineCompilationOptions::default(),
+                    buffers: &[],
+                },
+                primitive: PrimitiveState {
+                    topology: wgpu::PrimitiveTopology::TriangleList,
+                    strip_index_format: None,
+                    front_face: wgpu::FrontFace::Ccw,
+                    cull_mode: None,
+                    unclipped_depth: false,
+                    polygon_mode: wgpu::PolygonMode::Fill,
+                    conservative: false,
+                },
+                depth_stencil: None,
+                multisample: MultisampleState {
+                    count: 1,
+                    mask: !0,
+                    alpha_to_coverage_enabled: false,
+                },
+                fragment: Some(FragmentState {
+                    module: &composite_shader,
+                    entry_point: Some("fs_main"),
+                    compilation_options: PipelineCompilationOptions::default(),
+                    targets: &[Some(ColorTargetState {
+                        format: gfx.surface_format,
+                        blend: Some(BlendState::REPLACE),
+                        write_mask: ColorWrites::ALL,
+                    })],
+                }),
+                multiview_mask: None,
+                cache: None,
+            });
+
+        Self {
+            physical_size,
+            hdr_bind_group_layout,
+            fullscreen_shader,
+            composite_pipeline,
+
+            hdr_color,
+            hdr_color_view,
+            hdr_sampler,
+            hdr_bind_group,
+        }
+    }
+
+    pub fn resize(&mut self, gfx: &Graphics, physical_size: [u32; 2]) {
+        self.physical_size = physical_size;
+
+        log::info!(
+            "Resizing render stack viewport to ({}, {})",
+            physical_size[0],
+            physical_size[1]
+        );
+
+        self.hdr_color = create_hdr_color(gfx, physical_size[0], physical_size[1]);
+        self.hdr_color_view = create_hdr_color_view(&self.hdr_color);
+        self.hdr_bind_group = create_hdr_bind_group(
+            gfx,
+            &self.hdr_bind_group_layout,
+            &self.hdr_color_view,
+            &self.hdr_sampler,
+        );
+    }
+
+    pub fn render(
+        &mut self,
+        _gfx: &Graphics,
+        _world: &mut hecs::World,
+        encoder: &mut wgpu::CommandEncoder,
+    ) {
+        let render_pass = encoder
+            .begin_render_pass(&wgpu::RenderPassDescriptor {
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &self.hdr_color_view,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(wgpu::Color {
+                            r: 1.0,
+                            g: 0.24,
+                            b: 0.0,
+                            a: 1.0,
+                        }),
+                        store: wgpu::StoreOp::Store,
+                    },
+                    depth_slice: None,
+                })],
+                depth_stencil_attachment: None,
+                ..Default::default()
+            })
+            .forget_lifetime();
+        drop(render_pass);
+    }
+
+    pub fn draw_composite(&self, render_pass: &mut RenderPass<'static>) {
+        render_pass.set_pipeline(&self.composite_pipeline);
+        render_pass.set_bind_group(0, &self.hdr_bind_group, &[]);
+        render_pass.draw(0..3, 0..1);
+    }
+}
+
+fn create_hdr_color(gfx: &Graphics, width: u32, height: u32) -> wgpu::Texture {
+    let texture = gfx.device.create_texture(&wgpu::TextureDescriptor {
+        label: Some("hdr_color_attachment"),
+        size: wgpu::Extent3d {
+            width,
+            height,
+            depth_or_array_layers: 1,
+        },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format: HDR_COLOR_FORMAT,
+        usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+        view_formats: &[],
+    });
+    texture
+}
+
+fn create_hdr_color_view(texture: &wgpu::Texture) -> TextureView {
+    texture.create_view(&TextureViewDescriptor {
+        label: Some("hdr_color_attachment_view"),
+        ..Default::default()
+    })
+}
+
+fn create_hdr_sampler(gfx: &Graphics) -> wgpu::Sampler {
+    gfx.device.create_sampler(&SamplerDescriptor {
+        label: Some("hdr_sampler"),
+        address_mode_u: AddressMode::ClampToEdge,
+        address_mode_v: AddressMode::ClampToEdge,
+        address_mode_w: AddressMode::ClampToEdge,
+        mag_filter: FilterMode::Linear,
+        min_filter: FilterMode::Linear,
+        mipmap_filter: MipmapFilterMode::Nearest,
+        ..Default::default()
+    })
+}
+
+fn create_hdr_bind_group(
+    gfx: &Graphics,
+    hdr_layout: &BindGroupLayout,
+    hdr_color_view: &TextureView,
+    hdr_sampler: &Sampler,
+) -> wgpu::BindGroup {
+    gfx.device.create_bind_group(&BindGroupDescriptor {
+        label: Some("hdr_bind_group"),
+        layout: &hdr_layout,
+        entries: &[
+            BindGroupEntry {
+                binding: 0,
+                resource: BindingResource::TextureView(&hdr_color_view),
+            },
+            BindGroupEntry {
+                binding: 1,
+                resource: BindingResource::Sampler(&hdr_sampler),
+            },
+        ],
+    })
+}
