@@ -35,7 +35,7 @@ struct Texture {
     pub options: Option<epaint::textures::TextureOptions>,
 }
 
-pub struct EguiRenderer {
+pub struct UiRenderer {
     pipeline: wgpu::RenderPipeline,
 
     index_buffer: SlicedBuffer,
@@ -57,11 +57,11 @@ pub struct EguiRenderer {
     pub callback_resources: CallbackResources,
 }
 
-impl EguiRenderer {
+impl UiRenderer {
     pub fn new(device: &wgpu::Device, output_color_format: wgpu::TextureFormat) -> Self {
         let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("ui"),
-            source: wgpu::ShaderSource::Wgsl(Cow::Borrowed(include_str!("egui.wgsl"))),
+            source: wgpu::ShaderSource::Wgsl(Cow::Borrowed(include_str!("ui.wgsl"))),
         });
 
         let uniform_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -523,14 +523,14 @@ impl EguiRenderer {
     /// Registers a [`wgpu::Texture`] with an existing [`epaint::TextureId`].
     ///
     /// This enables applications to reuse [`epaint::TextureId`]s.
-    pub fn update_egui_texture_from_wgpu_texture(
+    pub fn update_ui_texture_from_wgpu_texture(
         &mut self,
         device: &wgpu::Device,
         texture: &wgpu::TextureView,
         texture_filter: wgpu::FilterMode,
         id: epaint::TextureId,
     ) {
-        self.update_egui_texture_from_wgpu_texture_with_sampler_options(
+        self.update_ui_texture_from_wgpu_texture_with_sampler_options(
             device,
             texture,
             wgpu::SamplerDescriptor {
@@ -597,7 +597,7 @@ impl EguiRenderer {
     ///
     /// This allows applications to reuse [`epaint::TextureId`]s created with custom sampler options.
     #[expect(clippy::needless_pass_by_value)] // false positive
-    pub fn update_egui_texture_from_wgpu_texture_with_sampler_options(
+    pub fn update_ui_texture_from_wgpu_texture_with_sampler_options(
         &mut self,
         device: &wgpu::Device,
         texture: &wgpu::TextureView,

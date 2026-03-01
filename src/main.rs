@@ -8,9 +8,10 @@ use winit::event_loop::EventLoop;
 use winit::keyboard::{KeyCode, PhysicalKey};
 use winit::window::{Theme, Window, WindowId};
 
-mod app;
-mod renderer;
-mod toolkit;
+pub mod app;
+pub mod misc;
+pub mod renderer;
+pub mod toolkit;
 
 use crate::app::App;
 use crate::renderer::{EguiScreen, Graphics, Renderer};
@@ -77,7 +78,7 @@ impl ApplicationHandler for Framework {
             );
         let renderer = Renderer::new(&gfx);
 
-        let egui_context = app.egui_context();
+        let egui_context = app.ui_context();
         let viewport_id = egui_context.viewport_id();
         let ui_state = egui_winit::State::new(
             egui_context,
@@ -175,7 +176,7 @@ impl ApplicationHandler for Framework {
                 ctx.begin_pass(ui_input);
 
                 // Run App logic
-                app.update(world, ctx.clone());
+                app.update(world, ctx.clone(), delta_time);
 
                 // End Building UI
                 let egui::FullOutput {

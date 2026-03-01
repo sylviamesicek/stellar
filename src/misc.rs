@@ -43,7 +43,7 @@ pub fn format_with_decimals_in_range(
 
 /// Options for how to format a floating point number, e.g. an [`f64`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub struct FloatFormatOptions {
+struct FloatFormatOptions {
     /// Always show the sign, even if it is positive (`+`).
     pub always_sign: bool,
 
@@ -66,7 +66,7 @@ pub struct FloatFormatOptions {
 impl FloatFormatOptions {
     /// Default options for formatting an [`half::f16`].
     #[expect(non_upper_case_globals)]
-    pub const DEFAULT_f16: Self = Self {
+    pub const _DEFAULT_f16: Self = Self {
         always_sign: false,
         precision: 5,
         num_decimals: None,
@@ -96,7 +96,7 @@ impl FloatFormatOptions {
 
     /// Always show the sign, even if it is positive (`+`).
     #[inline]
-    pub fn with_always_sign(mut self, always_sign: bool) -> Self {
+    pub fn _with_always_sign(mut self, always_sign: bool) -> Self {
         self.always_sign = always_sign;
         self
     }
@@ -104,7 +104,7 @@ impl FloatFormatOptions {
     /// Show at most this many digits of precision,
     /// including both the integer part and the fractional part.
     #[inline]
-    pub fn with_precision(mut self, precision: usize) -> Self {
+    pub fn _with_precision(mut self, precision: usize) -> Self {
         self.precision = precision;
         self
     }

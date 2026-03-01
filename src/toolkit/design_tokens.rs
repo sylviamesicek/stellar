@@ -457,7 +457,7 @@ impl DesignTokens {
         self.set_colors(style);
 
         style.number_formatter =
-            egui::style::NumberFormatter::new(super::format::format_with_decimals_in_range);
+            egui::style::NumberFormatter::new(crate::misc::format_with_decimals_in_range);
     }
 
     pub(crate) fn set_fonts(&self, ctx: &egui::Context) {
@@ -772,7 +772,7 @@ impl DesignTokens {
     }
 
     pub fn top_panel_frame(&self) -> egui::Frame {
-        let mut frame = egui::Frame {
+        let frame = egui::Frame {
             inner_margin: self.top_bar_margin(),
             fill: self.top_bar_color,
             ..Default::default()
@@ -804,7 +804,7 @@ impl DesignTokens {
 
         let margin = self.bottom_panel_margin();
 
-        let mut frame = egui::Frame {
+        let frame = egui::Frame {
             fill: self.bottom_bar_color,
             inner_margin: margin + margin_offset,
             outer_margin: egui::Margin {

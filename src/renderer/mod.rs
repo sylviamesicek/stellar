@@ -1,14 +1,13 @@
-mod egui_renderer;
 mod graphics;
+mod ui;
 
-use egui::{ClippedPrimitive, epaint};
-use egui_renderer::EguiRenderer;
+use ui::UiRenderer;
 
-pub use egui_renderer::EguiScreen;
 pub use graphics::Graphics;
+pub use ui::EguiScreen;
 
 pub struct Renderer {
-    ui: EguiRenderer,
+    ui: UiRenderer,
     // Temporary state
     paint_jobs: Vec<egui::ClippedPrimitive>,
     screen: EguiScreen,
@@ -16,7 +15,7 @@ pub struct Renderer {
 
 impl Renderer {
     pub fn new(gfx: &Graphics) -> Self {
-        let ui = EguiRenderer::new(&gfx.device, gfx.surface_format);
+        let ui = UiRenderer::new(&gfx.device, gfx.surface_format);
 
         Self {
             ui,
