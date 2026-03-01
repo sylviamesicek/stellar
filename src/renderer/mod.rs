@@ -63,16 +63,12 @@ impl Renderer {
         self.screen = screen;
     }
 
-    pub fn render_frame(
+    pub fn prepare(
         &mut self,
         gfx: &Graphics,
-        surface_view: &wgpu::TextureView,
         world: &mut hecs::World,
         encoder: &mut wgpu::CommandEncoder,
     ) {
-        // **************************************
-        // Camera Render Passes
-
         // Remove any stacks that no longer exist
         let mut remove_list = SmallVec::<[Entity; 4]>::new();
         for &e in self.stacks.keys() {
@@ -96,6 +92,22 @@ impl Renderer {
                 stack.resize(gfx, camera.physical_size);
             }
         }
+
+        // Render stacks
+        for stack in self.stacks.values_mut() {
+            stack.prepare(gfx, world, encoder);
+        }
+    }
+
+    pub fn render(
+        &mut self,
+        gfx: &Graphics,
+        surface_view: &wgpu::TextureView,
+        world: &mut hecs::World,
+        encoder: &mut wgpu::CommandEncoder,
+    ) {
+        // **************************************
+        // Camera Render Passes
 
         // Render stacks
         for stack in self.stacks.values_mut() {
@@ -151,6 +163,12 @@ impl Renderer {
         self.stacks = resources.stacks;
         // End render pass
         drop(render_pass);
+    }
+
+    pub fn recall(&mut self, gfx: &Graphics, world: &mut hecs::World) {
+        for stack in self.stacks.values_mut() {
+            stack.recall(gfx, world);
+        }
     }
 }
 

@@ -153,6 +153,14 @@ impl RenderStack {
         );
     }
 
+    pub fn prepare(
+        &mut self,
+        _gfx: &Graphics,
+        _world: &mut hecs::World,
+        _encoder: &mut wgpu::CommandEncoder,
+    ) {
+    }
+
     pub fn render(
         &mut self,
         _gfx: &Graphics,
@@ -181,6 +189,8 @@ impl RenderStack {
             .forget_lifetime();
         drop(render_pass);
     }
+
+    pub fn recall(&mut self, _gfx: &Graphics, _world: &mut hecs::World) {}
 
     pub fn draw_composite(&self, render_pass: &mut RenderPass<'static>) {
         render_pass.set_pipeline(&self.composite_pipeline);

@@ -230,8 +230,9 @@ impl ApplicationHandler for Framework {
                 let mut encoder = gfx
                     .device
                     .create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
-
-                // Perform rendering
+                // Prepare renderer
+                renderer.prepare(gfx, world, &mut encoder);
+                // Prepare UI
                 renderer.prepare_ui(
                     gfx,
                     UiScreen {
@@ -242,9 +243,12 @@ impl ApplicationHandler for Framework {
                     &paint_jobs,
                     &mut encoder,
                 );
-                renderer.render_frame(gfx, &surface_view, world, &mut encoder);
-                // Submit command encoder
+                // Render
+                renderer.render(gfx, &surface_view, world, &mut encoder);
                 gfx.queue.submit(std::iter::once(encoder.finish()));
+                // Free Resources
+                renderer.recall(gfx, world);
+                // Present
                 surface_texture.present();
             }
             _ => {}

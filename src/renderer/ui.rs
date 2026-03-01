@@ -343,6 +343,7 @@ impl UiRenderer {
                 Primitive::Callback(callback) => {
                     let Some(cbfn) = callback.callback.downcast_ref::<UiCallback>() else {
                         // We already warned in the `prepare` callback
+                        log::warn!("Unknown paint callback: expected `ui::UiCallback`");
                         continue;
                     };
 
@@ -666,7 +667,7 @@ impl UiRenderer {
         encoder: &mut wgpu::CommandEncoder,
         paint_jobs: &[epaint::ClippedPrimitive],
         screen: &UiScreen,
-    ) -> Vec<wgpu::CommandBuffer> {
+    ) {
         let screen_size_in_points = screen.screen_size_in_points();
 
         let uniform_buffer_content = UniformBuffer {
@@ -684,19 +685,19 @@ impl UiRenderer {
         }
 
         // Determine how many vertices & indices need to be rendered, and gather prepare callbacks
-        let mut callbacks = Vec::new();
+        // let mut callbacks = Vec::new();
         let (vertex_count, index_count) = {
             paint_jobs.iter().fold((0, 0), |acc, clipped_primitive| {
                 match &clipped_primitive.primitive {
                     Primitive::Mesh(mesh) => {
                         (acc.0 + mesh.vertices.len(), acc.1 + mesh.indices.len())
                     }
-                    Primitive::Callback(callback) => {
-                        if let Some(c) = callback.callback.downcast_ref::<UiCallback>() {
-                            callbacks.push(c.0.as_ref());
-                        } else {
-                            log::warn!("Unknown paint callback: expected `ui::Callback`");
-                        }
+                    Primitive::Callback(_callback) => {
+                        // if let Some(c) = callback.callback.downcast_ref::<UiCallback>() {
+                        //     callbacks.push(c.0.as_ref());
+                        // } else {
+                        //     log::warn!("Unknown paint callback: expected `ui::UiCallback`");
+                        // }
                         acc
                     }
                 }
@@ -787,24 +788,24 @@ impl UiRenderer {
             }
         }
 
-        let mut user_cmd_bufs = Vec::new();
-        for callback in &callbacks {
-            user_cmd_bufs.extend(callback.prepare(
-                gfx,
-                screen,
-                encoder,
-                &mut self.callback_resources,
-            ));
-        }
-        for callback in &callbacks {
-            user_cmd_bufs.extend(callback.finish_prepare(
-                gfx,
-                encoder,
-                &mut self.callback_resources,
-            ));
-        }
+        // let mut user_cmd_bufs = Vec::new();
+        // for callback in &callbacks {
+        //     user_cmd_bufs.extend(callback.prepare(
+        //         gfx,
+        //         screen,
+        //         encoder,
+        //         &mut self.callback_resources,
+        //     ));
+        // }
+        // for callback in &callbacks {
+        //     user_cmd_bufs.extend(callback.finish_prepare(
+        //         gfx,
+        //         encoder,
+        //         &mut self.callback_resources,
+        //     ));
+        // }
 
-        user_cmd_bufs
+        // user_cmd_bufs
     }
 }
 
@@ -960,25 +961,25 @@ impl UiCallback {
 ///
 /// See the [`custom3d_wgpu`](https://github.com/emilk/egui/blob/main/crates/egui_demo_app/src/apps/custom3d_wgpu.rs) demo source for a detailed usage example.
 pub trait UiCallbackTrait: Send + Sync {
-    fn prepare(
-        &self,
-        _gfx: &Graphics,
-        _screen_descriptor: &UiScreen,
-        _egui_encoder: &mut wgpu::CommandEncoder,
-        _callback_resources: &mut UiCallbackResources,
-    ) -> Vec<wgpu::CommandBuffer> {
-        Vec::new()
-    }
+    // fn prepare(
+    //     &self,
+    //     _gfx: &Graphics,
+    //     _screen_descriptor: &UiScreen,
+    //     _egui_encoder: &mut wgpu::CommandEncoder,
+    //     _callback_resources: &mut UiCallbackResources,
+    // ) -> Vec<wgpu::CommandBuffer> {
+    //     Vec::new()
+    // }
 
-    /// Called after all [`UiCallbackTrait::prepare`] calls are done.
-    fn finish_prepare(
-        &self,
-        _gfx: &Graphics,
-        _egui_encoder: &mut wgpu::CommandEncoder,
-        _callback_resources: &mut UiCallbackResources,
-    ) -> Vec<wgpu::CommandBuffer> {
-        Vec::new()
-    }
+    // /// Called after all [`UiCallbackTrait::prepare`] calls are done.
+    // fn finish_prepare(
+    //     &self,
+    //     _gfx: &Graphics,
+    //     _egui_encoder: &mut wgpu::CommandEncoder,
+    //     _callback_resources: &mut UiCallbackResources,
+    // ) -> Vec<wgpu::CommandBuffer> {
+    //     Vec::new()
+    // }
 
     /// Called after all [`UiCallbackTrait::finish_prepare`] calls are done.
     ///
