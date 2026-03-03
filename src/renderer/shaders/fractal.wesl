@@ -20,6 +20,10 @@ struct CameraUniform {
 
 struct GlobalUniform {
     time: f32,
+    pre_saturation: f32,
+    post_saturation: f32,
+    gamma: f32,
+    exposure: f32,
 }
 
 @group(0) 
@@ -108,13 +112,16 @@ fn mandelbulb(position: vec3f) -> f32 {
 
 fn distance_estimator(point: vec3f) -> f32 {
     var p = point;
+
     if fractal_type == 0 {
+        // Sierpinski's tetrahedra
         let pyz = rotate(0.20 * pi) * p.yz;
         p = vec3(p.x, pyz);
         let pyx = rotate(0.25 * pi) * p.yx;
         p = vec3(pyx.yx, p.z);
         return sierpinski3(p);  
     } else if fractal_type == 1 {
+        // Mandlebulb
         let pyz = rotate(-0.3 * pi) * p.yz;
         p = vec3(p.x, pyz);
         return mandelbulb(p);
@@ -183,7 +190,7 @@ fn ray_marcher(ro: vec3f, rd: vec3f) -> vec4f {
             color = vec3(0.0);
         }
 
-        color /= f32(steps) * 0.08; // Ambeint occlusion
+        color /= f32(steps) * 0.08; // Ambient occlusion
         // color /= pow(distance(ro, min_dist_to_sceen_pos), 2.0);
         // color *= 3.0;
     }

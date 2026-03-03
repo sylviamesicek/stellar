@@ -1,5 +1,37 @@
 import super::fullscreen::{fullscreen, VertexOutput};
 
+
+@id(0)
+override output_linear: bool = false;
+
+@group(0) @binding(0)
+var hdr_color: texture_2d<f32>;
+@group(0) @binding(1)
+var hdr_sampler: sampler;
+
+struct CameraUniform {
+    proj: mat4x4f,
+    view: mat4x4f,
+    inv_proj: mat4x4f,
+    inv_view: mat4x4f,
+}
+
+struct GlobalUniform {
+    time: f32,
+    pre_saturation: f32,
+    post_saturation: f32,
+    gamma: f32,
+    exposure: f32,
+}
+
+@group(1) 
+@binding(0)
+var<uniform> camera: CameraUniform;
+
+@group(1)
+@binding(1)
+var<uniform> global: GlobalUniform;
+
 // --------------------------------------
 // --- SomewhatBoringDisplayTransform ---
 // --------------------------------------
@@ -262,9 +294,9 @@ fn tone_mapping(in: vec4<f32>) -> vec4<f32> {
     // color = color * powsafe(vec3(2.0), params.exposure);
     // color = max(color, vec3(0.0));
 
-    color = saturation(color, 1.0);
-    color = powsafe(color, 1.0);
-    color = color * powsafe(vec3(2.0), 0.0);
+    color = saturation(color, global.pre_saturation);
+    color = powsafe(color, global.gamma);
+    color = color * powsafe(vec3(2.0), global.exposure);
     color = max(color, vec3(0.0));
 
     // tone_mapping
@@ -291,7 +323,7 @@ fn tone_mapping(in: vec4<f32>) -> vec4<f32> {
 
     // Perceptual post tonemapping grading
     // color = saturation(color, params.post_saturation);
-    color = saturation(color, 1.0);
+    color = saturation(color, global.post_saturation);
 
     
     return vec4(color, in.a);
@@ -329,14 +361,6 @@ fn tone_mapping(in: vec4<f32>) -> vec4<f32> {
 //   float result = (X * (6.2 * X + 0.5)) / (X * (6.2 * X + 1.7) + 0.06);
 //   return pow(result, 2.2);
 // }
-
-@id(0)
-override output_linear: bool = false;
-
-@group(0) @binding(0)
-var hdr_color: texture_2d<f32>;
-@group(0) @binding(1)
-var hdr_sampler: sampler;
 
 @vertex
 fn vs_main(@builtin(vertex_index) vertex_index: u32) -> VertexOutput {

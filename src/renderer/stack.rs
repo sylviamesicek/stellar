@@ -32,6 +32,10 @@ pub struct CameraUniform {
 #[repr(C)]
 pub struct GlobalUniform {
     time: f32,
+    pre_saturation: f32,
+    post_saturation: f32,
+    gamma: f32,
+    exposure: f32,
 }
 
 #[derive(Debug)]
@@ -45,6 +49,9 @@ pub struct RenderStack {
     // Global Params Data
     global_buffer: wgpu::Buffer,
 
+    frame_bind_group_layout: wgpu::BindGroupLayout,
+    frame_bind_group: wgpu::BindGroup,
+
     // HDR color texture (primary render target)
     hdr_color: wgpu::Texture,
     hdr_color_view: TextureView,
@@ -52,7 +59,6 @@ pub struct RenderStack {
 
     // Sierpinksi Pipeline
     sierpinski: wgpu::RenderPipeline,
-    sierpinski_frame_bind_group: wgpu::BindGroup,
 
     // Composite Pipeline
     composite: wgpu::RenderPipeline,
@@ -76,6 +82,57 @@ impl RenderStack {
             size: size_of::<GlobalUniform>() as u64,
             usage: BufferUsages::UNIFORM | BufferUsages::COPY_DST,
             mapped_at_creation: false,
+        });
+
+        let frame_bind_group_layout =
+            gfx.device
+                .create_bind_group_layout(&BindGroupLayoutDescriptor {
+                    label: Some("frame_bind_group_layout"),
+                    entries: &[
+                        BindGroupLayoutEntry {
+                            binding: 0,
+                            visibility: ShaderStages::VERTEX | ShaderStages::FRAGMENT,
+                            ty: BindingType::Buffer {
+                                ty: BufferBindingType::Uniform,
+                                has_dynamic_offset: false,
+                                min_binding_size: None,
+                            },
+                            count: None,
+                        },
+                        BindGroupLayoutEntry {
+                            binding: 1,
+                            visibility: ShaderStages::VERTEX | ShaderStages::FRAGMENT,
+                            ty: BindingType::Buffer {
+                                ty: BufferBindingType::Uniform,
+                                has_dynamic_offset: false,
+                                min_binding_size: None,
+                            },
+                            count: None,
+                        },
+                    ],
+                });
+
+        let frame_bind_group = gfx.device.create_bind_group(&BindGroupDescriptor {
+            label: Some("frame_bind_group"),
+            layout: &frame_bind_group_layout,
+            entries: &[
+                BindGroupEntry {
+                    binding: 0,
+                    resource: BindingResource::Buffer(BufferBinding {
+                        buffer: &camera_buffer,
+                        offset: 0,
+                        size: None,
+                    }),
+                },
+                BindGroupEntry {
+                    binding: 1,
+                    resource: BindingResource::Buffer(BufferBinding {
+                        buffer: &global_buffer,
+                        offset: 0,
+                        size: None,
+                    }),
+                },
+            ],
         });
 
         let hdr_color = create_hdr_color(gfx, physical_size[0], physical_size[1]);
@@ -122,7 +179,7 @@ impl RenderStack {
             .device
             .create_pipeline_layout(&PipelineLayoutDescriptor {
                 label: None,
-                bind_group_layouts: &[&composite_hdr_bind_group_layout],
+                bind_group_layouts: &[&composite_hdr_bind_group_layout, &frame_bind_group_layout],
                 immediate_size: 0,
             });
 
@@ -138,64 +195,13 @@ impl RenderStack {
         // *****************************
         // Sierpinski Pipeline
 
-        let fractal_frame_bind_group_layout =
-            gfx.device
-                .create_bind_group_layout(&BindGroupLayoutDescriptor {
-                    label: Some("frame_bind_group_layout"),
-                    entries: &[
-                        BindGroupLayoutEntry {
-                            binding: 0,
-                            visibility: ShaderStages::VERTEX | ShaderStages::FRAGMENT,
-                            ty: BindingType::Buffer {
-                                ty: BufferBindingType::Uniform,
-                                has_dynamic_offset: false,
-                                min_binding_size: None,
-                            },
-                            count: None,
-                        },
-                        BindGroupLayoutEntry {
-                            binding: 1,
-                            visibility: ShaderStages::VERTEX | ShaderStages::FRAGMENT,
-                            ty: BindingType::Buffer {
-                                ty: BufferBindingType::Uniform,
-                                has_dynamic_offset: false,
-                                min_binding_size: None,
-                            },
-                            count: None,
-                        },
-                    ],
-                });
-
-        let fractal_frame_bind_group = gfx.device.create_bind_group(&BindGroupDescriptor {
-            label: Some("fractal_frame_bind_group"),
-            layout: &fractal_frame_bind_group_layout,
-            entries: &[
-                BindGroupEntry {
-                    binding: 0,
-                    resource: BindingResource::Buffer(BufferBinding {
-                        buffer: &camera_buffer,
-                        offset: 0,
-                        size: None,
-                    }),
-                },
-                BindGroupEntry {
-                    binding: 1,
-                    resource: BindingResource::Buffer(BufferBinding {
-                        buffer: &global_buffer,
-                        offset: 0,
-                        size: None,
-                    }),
-                },
-            ],
-        });
-
         let fractal_shader = gfx.create_shader_module("fractal", include_wesl!("fractal"));
 
         let layout = gfx
             .device
             .create_pipeline_layout(&PipelineLayoutDescriptor {
                 label: None,
-                bind_group_layouts: &[&fractal_frame_bind_group_layout],
+                bind_group_layouts: &[&frame_bind_group_layout],
                 immediate_size: 0,
             });
 
@@ -221,6 +227,9 @@ impl RenderStack {
 
             global_buffer,
 
+            frame_bind_group_layout,
+            frame_bind_group,
+
             hdr_color,
             hdr_color_view,
             hdr_sampler,
@@ -230,7 +239,6 @@ impl RenderStack {
             composite_hdr_bind_group,
 
             sierpinski,
-            sierpinski_frame_bind_group: fractal_frame_bind_group,
 
             staging_belt,
         }
@@ -301,7 +309,13 @@ impl RenderStack {
                 0,
                 (size_of::<GlobalUniform>() as u64).try_into().unwrap(),
             );
-            uniform.copy_from_slice(bytemuck::cast_slice(&[GlobalUniform { time }]));
+            uniform.copy_from_slice(bytemuck::cast_slice(&[GlobalUniform {
+                time,
+                pre_saturation: global.pre_saturation,
+                post_saturation: global.post_saturation,
+                gamma: global.gamma,
+                exposure: global.exposure,
+            }]));
         }
 
         self.staging_belt.finish();
@@ -332,7 +346,7 @@ impl RenderStack {
             ..Default::default()
         });
         render_pass.set_pipeline(&self.sierpinski);
-        render_pass.set_bind_group(0, &self.sierpinski_frame_bind_group, &[]);
+        render_pass.set_bind_group(0, &self.frame_bind_group, &[]);
         render_pass.draw(0..3, 0..1);
         drop(render_pass);
     }
@@ -344,6 +358,7 @@ impl RenderStack {
     pub fn draw_composite(&self, render_pass: &mut RenderPass<'static>) {
         render_pass.set_pipeline(&self.composite);
         render_pass.set_bind_group(0, &self.composite_hdr_bind_group, &[]);
+        render_pass.set_bind_group(1, &self.frame_bind_group, &[]);
         render_pass.draw(0..3, 0..1);
     }
 }
