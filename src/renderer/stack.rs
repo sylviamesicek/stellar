@@ -49,7 +49,6 @@ pub struct RenderStack {
     // Global Params Data
     global_buffer: wgpu::Buffer,
 
-    frame_bind_group_layout: wgpu::BindGroupLayout,
     frame_bind_group: wgpu::BindGroup,
 
     // HDR color texture (primary render target)
@@ -58,7 +57,7 @@ pub struct RenderStack {
     hdr_sampler: wgpu::Sampler,
 
     // Sierpinksi Pipeline
-    sierpinski: wgpu::RenderPipeline,
+    fractal: [wgpu::RenderPipeline; 2],
 
     // Composite Pipeline
     composite: wgpu::RenderPipeline,
@@ -173,46 +172,36 @@ impl RenderStack {
         // *******************************
         // Composite Pipeline
 
-        let shader = gfx.create_shader_module("composite", include_wesl!("composite"));
-
-        let layout = gfx
-            .device
-            .create_pipeline_layout(&PipelineLayoutDescriptor {
-                label: None,
-                bind_group_layouts: &[&composite_hdr_bind_group_layout, &frame_bind_group_layout],
-                immediate_size: 0,
-            });
-
-        let composite = create_post_processing_pipeline(
-            gfx,
-            "composite_pipeline",
-            layout,
-            shader,
-            gfx.surface_format,
-            Default::default(),
+        let composite_shader = gfx.create_shader_module("composite", include_wesl!("composite"));
+        let composite_layout = gfx.create_pipeline_layout(
+            0,
+            &[&composite_hdr_bind_group_layout, &frame_bind_group_layout],
         );
+        let composite = gfx
+            .post_processing_pipeline(&composite_shader, gfx.surface_format)
+            .name("composite")
+            .layout(&composite_layout)
+            .build();
 
         // *****************************
         // Sierpinski Pipeline
 
         let fractal_shader = gfx.create_shader_module("fractal", include_wesl!("fractal"));
+        let fractal_layout = gfx.create_pipeline_layout(0, &[&frame_bind_group_layout]);
 
-        let layout = gfx
-            .device
-            .create_pipeline_layout(&PipelineLayoutDescriptor {
-                label: None,
-                bind_group_layouts: &[&frame_bind_group_layout],
-                immediate_size: 0,
-            });
+        let mandlebulb = gfx
+            .post_processing_pipeline(&fractal_shader, HDR_COLOR_FORMAT)
+            .name("sierpinski")
+            .layout(&fractal_layout)
+            .add_constant("fractal_type", 0.0)
+            .build();
 
-        let sierpinski = create_post_processing_pipeline(
-            gfx,
-            "sierpinski",
-            layout,
-            fractal_shader,
-            HDR_COLOR_FORMAT,
-            Default::default(),
-        );
+        let sierpinski = gfx
+            .post_processing_pipeline(&fractal_shader, HDR_COLOR_FORMAT)
+            .name("sierpinski")
+            .layout(&fractal_layout)
+            .add_constant("fractal_type", 1.0)
+            .build();
 
         // ******************************
         // Staging Belt
@@ -227,7 +216,6 @@ impl RenderStack {
 
             global_buffer,
 
-            frame_bind_group_layout,
             frame_bind_group,
 
             hdr_color,
@@ -238,7 +226,7 @@ impl RenderStack {
             composite_hdr_bind_group_layout,
             composite_hdr_bind_group,
 
-            sierpinski,
+            fractal: [mandlebulb, sierpinski],
 
             staging_belt,
         }
@@ -345,7 +333,7 @@ impl RenderStack {
             depth_stencil_attachment: None,
             ..Default::default()
         });
-        render_pass.set_pipeline(&self.sierpinski);
+        render_pass.set_pipeline(&self.fractal[0]);
         render_pass.set_bind_group(0, &self.frame_bind_group, &[]);
         render_pass.draw(0..3, 0..1);
         drop(render_pass);
@@ -421,52 +409,4 @@ fn create_hdr_bind_group(
             },
         ],
     })
-}
-
-fn create_post_processing_pipeline(
-    gfx: &Graphics,
-    name: &str,
-    layout: wgpu::PipelineLayout,
-    shader: wgpu::ShaderModule,
-    format: wgpu::TextureFormat,
-    options: PipelineCompilationOptions,
-) -> wgpu::RenderPipeline {
-    gfx.device
-        .create_render_pipeline(&RenderPipelineDescriptor {
-            label: Some(name),
-            layout: Some(&layout),
-            vertex: VertexState {
-                module: &shader,
-                entry_point: Some("vs_main"),
-                compilation_options: PipelineCompilationOptions::default(),
-                buffers: &[],
-            },
-            primitive: PrimitiveState {
-                topology: wgpu::PrimitiveTopology::TriangleList,
-                strip_index_format: None,
-                front_face: wgpu::FrontFace::Ccw,
-                cull_mode: None,
-                unclipped_depth: false,
-                polygon_mode: wgpu::PolygonMode::Fill,
-                conservative: false,
-            },
-            depth_stencil: None,
-            multisample: MultisampleState {
-                count: 1,
-                mask: !0,
-                alpha_to_coverage_enabled: false,
-            },
-            fragment: Some(FragmentState {
-                module: &shader,
-                entry_point: Some("fs_main"),
-                compilation_options: options,
-                targets: &[Some(ColorTargetState {
-                    format: format,
-                    blend: Some(BlendState::REPLACE),
-                    write_mask: ColorWrites::ALL,
-                })],
-            }),
-            multiview_mask: None,
-            cache: None,
-        })
 }

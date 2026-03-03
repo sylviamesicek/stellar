@@ -12,6 +12,11 @@ use crate::renderer::{DrawCameraCallback, UiCallback};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum Simulation {
+    Fractal,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum Fractal {
     Sierpinski,
     Mandlebulb,
 }
@@ -21,6 +26,7 @@ pub struct App {
     global: hecs::Entity,
 
     simulation: Simulation,
+    fractal: Fractal,
 
     show_post_processing: bool,
 }
@@ -31,7 +37,8 @@ impl App {
             camera: hecs::Entity::DANGLING,
             global: hecs::Entity::DANGLING,
 
-            simulation: Simulation::Mandlebulb,
+            simulation: Simulation::Fractal,
+            fractal: Fractal::Mandlebulb,
             show_post_processing: false,
         }
     }
@@ -76,7 +83,9 @@ impl App {
 
         egui::TopBottomPanel::top("top").show(&ctx, |ui| {
             egui::containers::menu::MenuBar::new().ui(ui, |ui| {
-                ui.menu_button("General", |ui| {});
+                ui.menu_button("Simulation", |ui| {
+                    ui.selectable_value(&mut self.simulation, Simulation::Fractal, "Fractal");
+                });
                 ui.menu_button("Graphics", |ui| {
                     if ui.button("Post-Processing").clicked() {
                         self.show_post_processing = true;
@@ -86,27 +95,37 @@ impl App {
         });
 
         egui::SidePanel::left("left").show(&ctx, |ui| {
-            // ui.label("Hello World");
-            // if ui.secondary_button("Click Me!").clicked() {}
-
             // ui.allocate_space(ui.available_size())
+            if self.simulation == Simulation::Fractal {
+                ui.heading("Fractal");
 
-            ui.heading("Simulation");
+                ui.horizontal(|ui| {
+                    ui.label("Kind:");
 
-            egui::containers::ComboBox::from_id_salt("simulation_box")
-                .selected_text(format!("{:?}", self.simulation))
-                .show_ui(ui, |ui| {
-                    ui.selectable_value(&mut self.simulation, Simulation::Mandlebulb, "Mandlebulb");
-                    ui.selectable_value(&mut self.simulation, Simulation::Sierpinski, "Sierpinski");
+                    egui::containers::ComboBox::from_id_salt("fractal_box")
+                        .selected_text(format!("{:?}", self.fractal))
+                        .show_ui(ui, |ui| {
+                            ui.selectable_value(
+                                &mut self.fractal,
+                                Fractal::Mandlebulb,
+                                "Mandlebulb",
+                            );
+                            ui.selectable_value(
+                                &mut self.fractal,
+                                Fractal::Sierpinski,
+                                "Sierpinski",
+                            );
+                        });
                 });
 
-            let mut transform = world.get::<&mut Transform>(self.camera).unwrap();
+                let mut transform = world.get::<&mut Transform>(self.camera).unwrap();
 
-            ui.heading("Camera");
+                ui.heading("Camera");
 
-            ui.add(egui::Slider::new(&mut transform.translation[0], -5.0..=5.0));
-            ui.add(egui::Slider::new(&mut transform.translation[1], -5.0..=5.0));
-            ui.add(egui::Slider::new(&mut transform.translation[2], 0.0..=10.0));
+                ui.add(egui::Slider::new(&mut transform.translation[0], -5.0..=5.0));
+                ui.add(egui::Slider::new(&mut transform.translation[1], -5.0..=5.0));
+                ui.add(egui::Slider::new(&mut transform.translation[2], 0.0..=10.0));
+            }
         });
 
         egui::CentralPanel::default()

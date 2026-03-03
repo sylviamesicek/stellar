@@ -1,5 +1,3 @@
-import super::fullscreen::{fullscreen, VertexOutput};
-
 const maximum_ray_steps: u32 = 250;
 const maximum_distance: f32 = 1000.0;
 const minimum_distance: f32 = 0.0001;
@@ -8,8 +6,7 @@ const pi: f32 = 3.141592653589793238;
 // **********************
 // Bindings *************
 
-@id(0)
-override fractal_type: u32 = 1;
+override fractal_type: u32 = 0;
 
 struct CameraUniform {
     proj: mat4x4f,
@@ -113,14 +110,14 @@ fn mandelbulb(position: vec3f) -> f32 {
 fn distance_estimator(point: vec3f) -> f32 {
     var p = point;
 
-    if fractal_type == 0 {
+    if fractal_type == 1 {
         // Sierpinski's tetrahedra
         let pyz = rotate(0.20 * pi) * p.yz;
         p = vec3(p.x, pyz);
         let pyx = rotate(0.25 * pi) * p.yx;
         p = vec3(pyx.yx, p.z);
         return sierpinski3(p);  
-    } else if fractal_type == 1 {
+    } else if fractal_type == 0 {
         // Mandlebulb
         let pyz = rotate(-0.3 * pi) * p.yz;
         p = vec3(p.x, pyz);
@@ -164,7 +161,7 @@ fn ray_marcher(ro: vec3f, rd: vec3f) -> vec4f {
 
     let iterations = f32(steps) + log(log(maximum_distance)) / log(2.0) - log(log(dot(cur_pos, cur_pos))) / log(2.0);
 
-    if fractal_type == 0 {
+    if fractal_type == 1 {
         if hit {
             color = vec3(0.8 + length(cur_pos) / 8.5, 1.0, 0.8);
             color = hsv2rgb(color);
@@ -178,7 +175,7 @@ fn ray_marcher(ro: vec3f, rd: vec3f) -> vec4f {
         color /= iterations / 10.0;
         // color /= pow(distance(ro, min_dist_to_origin_pos), 2.0);
         // color *= 2000.0;
-    } else if fractal_type == 1 {
+    } else if fractal_type == 0 {
         if hit {
             color = vec3(0.8 + length(cur_pos) / 0.5, 1.0, 0.8);
             color = hsv2rgb(color);
@@ -187,7 +184,6 @@ fn ray_marcher(ro: vec3f, rd: vec3f) -> vec4f {
             color = hsv2rgb(color);
             color *= 1.0 / (min_dist_to_scene * min_dist_to_scene);
             color /= map(sin(global.time * 3.0), -1.0, 1.0, 3000.0, 50000.0);
-            color = vec3(0.0);
         }
 
         color /= f32(steps) * 0.08; // Ambient occlusion
@@ -198,28 +194,19 @@ fn ray_marcher(ro: vec3f, rd: vec3f) -> vec4f {
     return vec4(color, 1.0);
 }
 
-fn create_ray(px: vec2f, pinv: mat4x4f, vinv: mat4x4f) -> vec3f {
+fn create_ray(uv: vec2f, pinv: mat4x4f, vinv: mat4x4f) -> vec3f {
     let camera_pos = vinv[3].xyz;
 
     // Transform to ndc while switching x axis
-    let ndc = (px * 2.0 - vec2(1.0)) * vec2(1.0, -1.0);
+    let ndc = (uv * 2.0 - vec2(1.0)) * vec2(1.0, -1.0);
     var far_plane = vinv * pinv * vec4(ndc, 1.0, 1.0);
     far_plane /= far_plane.w; // Perspective divide
     return normalize(far_plane.xyz - camera_pos);
 }
 
-
-
-@vertex
-fn vs_main(@builtin(vertex_index) vertex_index: u32) -> VertexOutput {
-    return fullscreen(vertex_index);
-}
-
 @fragment
-fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
-    let tex_coords: vec2f = in.tex_coords;
-
-    let ray_dir = create_ray(tex_coords, camera.inv_proj, camera.inv_view);
+fn fs_main(@location(0) uv: vec2f) -> @location(0) vec4<f32> {
+    let ray_dir = create_ray(uv, camera.inv_proj, camera.inv_view);
     let ray_origin = camera.inv_view[3].xyz;
     let color = ray_marcher(ray_origin, ray_dir);
     return vec4(color.xyz, 1.0);
