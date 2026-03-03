@@ -1,3 +1,0 @@
-[package]
-edition = "2026_pre"
-root = "./src/renderer/shaders"

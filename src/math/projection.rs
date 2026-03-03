@@ -1,4 +1,7 @@
-use super::{AspectRatio, Mat4, Rect, Transform, Vec2, Vec3A, Vec4, vec4};
+use crate::math::Rect;
+
+use super::Transform;
+use glam::{Mat4, Vec2, Vec3A, Vec4, vec4};
 use std::{
     fmt::Debug,
     ops::{Deref, DerefMut},
@@ -42,8 +45,7 @@ pub trait CameraProjection {
     /// This code is called by [`update_frusta`](crate::visibility::update_frusta) system
     /// for each camera to update its frustum.
     fn compute_frustum(&self, camera_transform: &Transform) -> super::Frustum {
-        let clip_from_world =
-            self.get_clip_from_view() * camera_transform.compute_affine().inverse();
+        let clip_from_world = self.get_clip_from_view() * camera_transform.to_matrix().inverse();
 
         super::Frustum::from_clip_from_world_custom_far(
             &clip_from_world,
@@ -192,9 +194,8 @@ impl CameraProjection for PerspectiveProjection {
     }
 
     fn update(&mut self, width: f32, height: f32) {
-        self.aspect_ratio = AspectRatio::try_new(width, height)
-            .expect("Failed to update PerspectiveProjection: width and height must be positive, non-zero values")
-            .ratio();
+        assert!(width > 0. && height > 0., "width and height must be > 0");
+        self.aspect_ratio = width / height;
     }
 
     fn far(&self) -> f32 {
@@ -202,7 +203,7 @@ impl CameraProjection for PerspectiveProjection {
     }
 
     fn get_frustum_corners(&self, z_near: f32, z_far: f32) -> [Vec3A; 8] {
-        let tan_half_fov = super::ops::tan(self.fov / 2.);
+        let tan_half_fov = (self.fov / 2.).tan();
         let a = z_near.abs() * tan_half_fov;
         let b = z_far.abs() * tan_half_fov;
         let aspect_ratio = self.aspect_ratio;

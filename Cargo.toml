@@ -4,8 +4,6 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-bevy_math = { version = "0.18" }
-bevy_transform = { version = "0.18", default-features = false }
 bytemuck = "1.25.0"
 color-eyre = "0.6.5"
 egui = { version = "0.33.3", features = ["bytemuck"] }
@@ -13,6 +11,7 @@ egui-winit = "0.33.3"
 egui_extras = { version = "0.33.3", features = ["svg"] }
 env_logger = "0.11.9"
 eyre = "0.6.12"
+glam = { version = "0.32.0", features = ["bytemuck", "serde"] }
 hecs = { version = "0.11.0", features = ["macros"] }
 log = "0.4.29"
 pollster = "0.4.0"

@@ -3,10 +3,11 @@ use std::time::Duration;
 
 use egui::Color32;
 use egui::epaint::ViewportInPixels;
+use glam::Vec3;
 use hecs::World;
 
 use crate::camera::Camera;
-use crate::math::{Transform, Vec3};
+use crate::math::Transform;
 use crate::renderer::{DrawCameraCallback, UiCallback};
 
 pub struct App {

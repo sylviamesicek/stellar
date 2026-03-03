@@ -12,7 +12,8 @@ use wgpu::{
 };
 
 use super::Graphics;
-use crate::{camera::Camera, math::Mat4, math::Transform};
+use crate::{camera::Camera, math::Transform};
+use glam::Mat4;
 
 const HDR_COLOR_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
 
