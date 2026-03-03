@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 
 use crate::camera::Camera;
+use crate::math::Transform;
 use hecs::Entity;
 use smallvec::SmallVec;
 use ui::UiRenderer;
@@ -72,7 +73,7 @@ impl Renderer {
         // Remove any stacks that no longer exist
         let mut remove_list = SmallVec::<[Entity; 4]>::new();
         for &e in self.stacks.keys() {
-            if !world.contains(e) {
+            if !world.contains(e) || !world.entity(e).unwrap().has::<Transform>() {
                 remove_list.push(e);
             }
         }
@@ -82,11 +83,11 @@ impl Renderer {
         }
 
         // Update any existing stacks
-        for (e, camera) in world.query_mut::<(Entity, &Camera)>() {
+        for (e, camera, _) in world.query_mut::<(Entity, &Camera, &Transform)>() {
             let stack = self
                 .stacks
                 .entry(e)
-                .or_insert_with(|| RenderStack::new(gfx, camera.physical_size));
+                .or_insert_with(|| RenderStack::new(gfx, e, camera.physical_size));
 
             if camera.physical_size != stack.physical_size {
                 stack.resize(gfx, camera.physical_size);

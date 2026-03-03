@@ -1,3 +1,4 @@
+import super::fullscreen::{fullscreen, VertexOutput};
 
 // --------------------------------------
 // --- SomewhatBoringDisplayTransform ---
@@ -332,15 +333,15 @@ fn tone_mapping(in: vec4<f32>) -> vec4<f32> {
 @id(0)
 override output_linear: bool = false;
 
-struct VertexOutput {
-    @builtin(position) position: vec4<f32>,
-    @location(0) tex_coords: vec2<f32>,
-}
-
 @group(0) @binding(0)
 var hdr_color: texture_2d<f32>;
 @group(0) @binding(1)
 var hdr_sampler: sampler;
+
+@vertex
+fn vs_main(@builtin(vertex_index) vertex_index: u32) -> VertexOutput {
+    return fullscreen(vertex_index);
+}
 
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
@@ -360,5 +361,5 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
 
 // #endif
 
-    return vec4<f32>(output_rgb, hrd_color.a);
+    return vec4f(output_rgb, hrd_color.a);
 }

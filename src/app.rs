@@ -8,8 +8,6 @@ use hecs::World;
 use crate::camera::Camera;
 use crate::math::{Transform, Vec3};
 use crate::renderer::{DrawCameraCallback, UiCallback};
-use crate::toolkit;
-use crate::toolkit::UiExt as _;
 
 pub struct App {
     camera: hecs::Entity,
@@ -25,7 +23,7 @@ impl App {
     pub fn ui_context(&self) -> egui::Context {
         let ctx = egui::Context::default();
 
-        toolkit::apply_style_and_install_loaders(&ctx);
+        // toolkit::apply_style_and_install_loaders(&ctx);
 
         ctx
     }
@@ -33,7 +31,7 @@ impl App {
     pub fn start(&mut self, world: &mut World) {
         self.camera = world.spawn(
             hecs::EntityBuilder::new()
-                .add(Transform::from_xyz(10.0, 12.0, 16.0).looking_at(Vec3::ZERO, Vec3::Y))
+                .add(Transform::from_xyz(-0.0, 0.0, 10.0).looking_at(Vec3::ZERO, Vec3::Y))
                 .add(Camera::perspective(f32::consts::PI / 2.0, 0.1, 1000.0))
                 .build(),
         );
@@ -54,11 +52,24 @@ impl App {
         //         ui.allocate_space(ui.available_size())
         //     });
 
-        egui::SidePanel::left("left").show(&ctx, |ui| {
-            ui.label("Hello World");
-            if ui.secondary_button("Click Me!").clicked() {}
+        egui::TopBottomPanel::top("top").show(&ctx, |ui| {
+            egui::MenuBar::new().ui(ui, |ui| {
+                ui.menu_button("Simulation", |ui| {});
+                ui.menu_button("Graphics", |ui| {});
+            });
+        });
 
-            ui.allocate_space(ui.available_size())
+        egui::SidePanel::left("left").show(&ctx, |ui| {
+            // ui.label("Hello World");
+            // if ui.secondary_button("Click Me!").clicked() {}
+
+            // ui.allocate_space(ui.available_size())
+
+            let mut transform = world.get::<&mut Transform>(self.camera).unwrap();
+
+            ui.add(egui::Slider::new(&mut transform.translation[0], -5.0..=5.0));
+            ui.add(egui::Slider::new(&mut transform.translation[1], -5.0..=5.0));
+            ui.add(egui::Slider::new(&mut transform.translation[2], 0.0..=10.0));
         });
 
         egui::CentralPanel::default()
@@ -75,6 +86,10 @@ impl App {
                         let viewport =
                             ViewportInPixels::from_points(&rect, ui.pixels_per_point(), screen);
 
+                        if viewport.width_px == 0 || viewport.height_px == 0 {
+                            return;
+                        }
+
                         // Update Camera
                         let mut camera = world.get::<&mut Camera>(self.camera).unwrap();
                         camera.update(viewport.width_px as u32, viewport.height_px as u32);
@@ -83,7 +98,7 @@ impl App {
                         ui.painter().add(UiCallback::new_paint_callback(
                             rect,
                             DrawCameraCallback::new(self.camera),
-                        ))
+                        ));
                     })
             });
     }
