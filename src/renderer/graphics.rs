@@ -1,3 +1,5 @@
+use std::borrow::Cow;
+
 pub struct Graphics {
     pub _instance: wgpu::Instance,
     pub device: wgpu::Device,
@@ -82,5 +84,13 @@ impl Graphics {
         self.surface_config.width = width;
         self.surface_config.height = height;
         self.surface.configure(&self.device, &self.surface_config);
+    }
+
+    pub fn create_shader_module(&self, name: &str, source: &str) -> wgpu::ShaderModule {
+        self.device
+            .create_shader_module(wgpu::ShaderModuleDescriptor {
+                label: Some(name),
+                source: wgpu::ShaderSource::Wgsl(Cow::Borrowed(source)),
+            })
     }
 }

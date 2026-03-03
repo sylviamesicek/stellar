@@ -1,50 +1,49 @@
 import super::fullscreen::{fullscreen, VertexOutput};
 
-const maximum_ray_steps: u32 = 100;
+const maximum_ray_steps: u32 = 250;
 const maximum_distance: f32 = 1000.0;
-const minimum_distance: f32 = 0.01;
+const minimum_distance: f32 = 0.0001;
 const pi: f32 = 3.141592653589793238;
 
+// **********************
+// Bindings *************
 
-// ********************
-// SDF functions
+@id(0)
+override fractal_type: u32 = 1;
 
-// Sphere
-fn signed_dist_sphere(p: vec3f, radius: f32) -> f32 {
-    return length(p) - radius;
-}
-// Box
-fn signed_dist_box(p: vec3f, size: f32) -> f32 {
-    let d = abs(p) - size;
-    return min(max(d.x, max(d.y, d.z)), 0.0) + length(max(d, vec3f(0.0)));
-}
-// Infinite Plane
-// n.xyz: normal of the plane
-// n.w: offset from origin
-fn signed_dist_plane(p: vec3f, n: vec4<f32>) -> f32 {
-    return dot(p, n.xyz) + n.w;
-}
-// Rounded box
-// r: radius of rounded edges
-fn signed_dist_round_box(p: vec3f, sides: vec3f, r: f32) -> f32 {
-    let q = abs(p) - sides;
-    return min(max(q.x, max(q.y, q.z)), 0.0) + length(max(q, vec3f(0.0))) - r;
+struct CameraUniform {
+    proj: mat4x4f,
+    view: mat4x4f,
+    inv_proj: mat4x4f,
+    inv_view: mat4x4f,
 }
 
-// ***********************
-// Boolean operators
+struct GlobalUniform {
+    time: f32,
+}
 
-// Union
-// d1: signed distance to shape 1
-// d2: signed distance to shape 2
+@group(0) 
+@binding(0)
+var<uniform> camera: CameraUniform;
 
-// ***********************
-// Main
+@group(0)
+@binding(1)
+var<uniform> global: GlobalUniform;
 
 fn hsv2rgb(color: vec3f) -> vec3f {
     const K: vec4f = vec4f(1.0, 2.0 / 3.0, 1.0 / 3.0, 3.0);
     let p: vec3f = abs(fract(color.xxx + K.xyz) * 6.0 - K.www);
     return color.z * mix(K.xxx, clamp(p - K.xxx, vec3f(0.0), vec3f(1.0)), color.y);
+}
+
+fn map(value: f32, min1: f32, max1: f32, min2: f32, max2: f32) -> f32 {
+    return min2 + (value - min1) * (max2 - min2) / (max1 - min1);
+}
+
+fn rotate(angle: f32) -> mat2x2f {
+    let s = sin(angle);
+    let c = cos(angle);
+    return mat2x2(c, -s, s, c);
 }
 
 fn sierpinski3(p: vec3f) -> f32 {
@@ -75,19 +74,53 @@ fn sierpinski3(p: vec3f) -> f32 {
     return length(z) * pow(scale, -f32(n));
 }
 
-fn rotate(angle: f32) -> mat2x2f {
-    let s = sin(angle);
-    let c = cos(angle);
-    return mat2x2(c, -s, s, c);
+fn mandelbulb(position: vec3f) -> f32 {
+  var z = position;
+  var dr = 1.0;
+  var r = 0.0;
+  var iterations = 0;
+  let power = 8.0 + (5.0 * map(sin(global.time * pi / 5.0 + pi), -1.0, 1.0, 0.0, 1.0));
+
+  for (var i = 0; i < 10; i++) {
+    iterations = i;
+    r = length (z);
+
+    if (r > 2.0) {
+      break;
+    }
+
+    // convert to polar coordinates
+    var theta = acos(z.z / r);
+    var phi = atan2(z.y, z.x);
+    dr = pow(r, power - 1.0) * power * dr + 1.0;
+
+    // scale and rotate the point
+    let zr = pow (r, power);
+    theta = theta * power;
+    phi = phi * power;
+
+    // convert back to cartesian coordinates
+    z = zr * vec3 (sin (theta) * cos (phi), sin (phi) * sin (theta), cos (theta));
+    z += position;
+  }
+  return 0.5 * log (r) * r / dr;
 }
 
 fn distance_estimator(point: vec3f) -> f32 {
     var p = point;
-    let pyz = rotate(0.20 * pi) * p.yz;
-    p = vec3(p.x, pyz);
-    let pyx = rotate(0.25 * pi) * p.yx;
-    p = vec3(pyx.yx, p.z);
-    return sierpinski3(p);
+    if fractal_type == 0 {
+        let pyz = rotate(0.20 * pi) * p.yz;
+        p = vec3(p.x, pyz);
+        let pyx = rotate(0.25 * pi) * p.yx;
+        p = vec3(pyx.yx, p.z);
+        return sierpinski3(p);  
+    } else if fractal_type == 1 {
+        let pyz = rotate(-0.3 * pi) * p.yz;
+        p = vec3(p.x, pyz);
+        return mandelbulb(p);
+    } else {
+        return maximum_distance + 1.0;
+    }
 }
 
 fn ray_marcher(ro: vec3f, rd: vec3f) -> vec4f {
@@ -124,19 +157,36 @@ fn ray_marcher(ro: vec3f, rd: vec3f) -> vec4f {
 
     let iterations = f32(steps) + log(log(maximum_distance)) / log(2.0) - log(log(dot(cur_pos, cur_pos))) / log(2.0);
 
-    if hit {
-        color = vec3(0.8 + length(cur_pos) / 8.5, 1.0, 0.8);
-        color = hsv2rgb(color);
-    } else {
-        // color = vec3(0.8 + length(min_dist_to_sceen_pos) / 8.0, 1.0, 0.8);
-        // color = hsv2rgb(color);
-        // color /= min_dist_to_scene;
-        color = vec3(0.0);
-    }
+    if fractal_type == 0 {
+        if hit {
+            color = vec3(0.8 + length(cur_pos) / 8.5, 1.0, 0.8);
+            color = hsv2rgb(color);
+        } else {
+            // color = vec3(0.8 + length(min_dist_to_sceen_pos) / 8.0, 1.0, 0.8);
+            // color = hsv2rgb(color);
+            // color /= min_dist_to_scene;
+            color = vec3(0.0);
+        }
 
-    color /= iterations / 10.0;
-    // color /= pow(distance(ro, min_dist_to_origin_pos), 2.0);
-    // color *= 2000.0;
+        color /= iterations / 10.0;
+        // color /= pow(distance(ro, min_dist_to_origin_pos), 2.0);
+        // color *= 2000.0;
+    } else if fractal_type == 1 {
+        if hit {
+            color = vec3(0.8 + length(cur_pos) / 0.5, 1.0, 0.8);
+            color = hsv2rgb(color);
+        } else {
+            color = vec3(0.8 + length(min_dist_to_sceen_pos) / 0.5, 1.0, 0.8);
+            color = hsv2rgb(color);
+            color *= 1.0 / (min_dist_to_scene * min_dist_to_scene);
+            color /= map(sin(global.time * 3.0), -1.0, 1.0, 3000.0, 50000.0);
+            color = vec3(0.0);
+        }
+
+        color /= f32(steps) * 0.08; // Ambeint occlusion
+        // color /= pow(distance(ro, min_dist_to_sceen_pos), 2.0);
+        // color *= 3.0;
+    }
 
     return vec4(color, 1.0);
 }
@@ -149,35 +199,9 @@ fn create_ray(px: vec2f, pinv: mat4x4f, vinv: mat4x4f) -> vec3f {
     var far_plane = vinv * pinv * vec4(ndc, 1.0, 1.0);
     far_plane /= far_plane.w; // Perspective divide
     return normalize(far_plane.xyz - camera_pos);
-
-
-    // // Convert pixel to nds
-    // // [0, 1] -> [-1, 1] (x axis)
-    // // [0, 1] -> [1, -1] (y axis)
-    // let px_nds = vec2(px.x * 2.0 - 1.0, 1.0 - px.y * 2.0);
-
-    // // Choose an arbitrary point in the viewing volume
-    // // z = 0.0 equals a point on the near plane
-    // let point_nds = vec3(px_nds, 0.0);
-    // let point_ndsh = vec4(point_nds, 1.0);
-    // var dir_eye: vec4f = pinv * point_ndsh;
-    // dir_eye.w = 0.0;
-
-    // let dir_world = (vinv * dir_eye).xyz;
-
-    // return normalize(dir_world);
 }
 
-struct CameraUniform {
-    proj: mat4x4f,
-    view: mat4x4f,
-    inv_proj: mat4x4f,
-    inv_view: mat4x4f,
-}
 
-@group(0) 
-@binding(0)
-var<uniform> camera: CameraUniform;
 
 @vertex
 fn vs_main(@builtin(vertex_index) vertex_index: u32) -> VertexOutput {
@@ -192,7 +216,4 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let ray_origin = camera.inv_view[3].xyz;
     let color = ray_marcher(ray_origin, ray_dir);
     return vec4(color.xyz, 1.0);
-
-    // return vec4(tex_coords, 0.0, 1.0);
-    // return vec4((ray_dir.xy + vec2(1.0)) / 2.0, 0.0, 1.0);
 }

@@ -1,18 +1,19 @@
-use std::borrow::Cow;
-
 use wesl::include_wesl;
 use wgpu::{
     AddressMode, BindGroupDescriptor, BindGroupEntry, BindGroupLayout, BindGroupLayoutDescriptor,
-    BindGroupLayoutEntry, BindingResource, BindingType, BlendState, Buffer, BufferBinding,
+    BindGroupLayoutEntry, BindingResource, BindingType, BlendState, BufferBinding,
     BufferBindingType, BufferDescriptor, BufferUsages, ColorTargetState, ColorWrites, FilterMode,
     FragmentState, MipmapFilterMode, MultisampleState, PipelineCompilationOptions,
     PipelineLayoutDescriptor, PrimitiveState, RenderPass, RenderPipelineDescriptor, Sampler,
-    SamplerBindingType, SamplerDescriptor, ShaderModuleDescriptor, ShaderSource, ShaderStages,
-    TextureSampleType, TextureView, TextureViewDescriptor, TextureViewDimension, VertexState,
+    SamplerBindingType, SamplerDescriptor, ShaderStages, TextureSampleType, TextureView,
+    TextureViewDescriptor, TextureViewDimension, VertexState,
 };
 
 use super::Graphics;
-use crate::{camera::Camera, math::Transform};
+use crate::{
+    components::{Camera, Global},
+    math::Transform,
+};
 use glam::Mat4;
 
 const HDR_COLOR_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
@@ -27,36 +28,61 @@ pub struct CameraUniform {
     inv_view: Mat4,
 }
 
+#[derive(Debug, Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
+#[repr(C)]
+pub struct GlobalUniform {
+    time: f32,
+}
+
 #[derive(Debug)]
 pub struct RenderStack {
     pub physical_size: [u32; 2],
 
+    // Camera data
     camera: hecs::Entity,
+    camera_buffer: wgpu::Buffer,
 
-    camera_buffer: Buffer,
-    camera_bind_group: wgpu::BindGroup,
-
-    hdr_bind_group_layout: BindGroupLayout,
-    composite_pipeline: wgpu::RenderPipeline,
-
-    sierpinski_pipeline: wgpu::RenderPipeline,
+    // Global Params Data
+    global_buffer: wgpu::Buffer,
 
     // HDR color texture (primary render target)
     hdr_color: wgpu::Texture,
     hdr_color_view: TextureView,
     hdr_sampler: wgpu::Sampler,
-    hdr_bind_group: wgpu::BindGroup,
+
+    // Sierpinksi Pipeline
+    sierpinski: wgpu::RenderPipeline,
+    sierpinski_frame_bind_group: wgpu::BindGroup,
+
+    // Composite Pipeline
+    composite: wgpu::RenderPipeline,
+    composite_hdr_bind_group_layout: BindGroupLayout,
+    composite_hdr_bind_group: wgpu::BindGroup,
 
     staging_belt: wgpu::util::StagingBelt,
 }
 
 impl RenderStack {
     pub fn new(gfx: &Graphics, camera: hecs::Entity, physical_size: [u32; 2]) -> Self {
+        let camera_buffer = gfx.device.create_buffer(&BufferDescriptor {
+            label: Some("camera_buffer"),
+            size: size_of::<CameraUniform>() as u64,
+            usage: BufferUsages::UNIFORM | BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
+        let global_buffer = gfx.device.create_buffer(&BufferDescriptor {
+            label: Some("global_buffer"),
+            size: size_of::<GlobalUniform>() as u64,
+            usage: BufferUsages::UNIFORM | BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
         let hdr_color = create_hdr_color(gfx, physical_size[0], physical_size[1]);
         let hdr_color_view = create_hdr_color_view(&hdr_color);
         let hdr_sampler = create_hdr_sampler(gfx);
 
-        let hdr_bind_group_layout =
+        let composite_hdr_bind_group_layout =
             gfx.device
                 .create_bind_group_layout(&BindGroupLayoutDescriptor {
                     label: Some("hdr_bind_group_layout"),
@@ -80,169 +106,131 @@ impl RenderStack {
                     ],
                 });
 
-        let hdr_bind_group =
-            create_hdr_bind_group(gfx, &hdr_bind_group_layout, &hdr_color_view, &hdr_sampler);
+        let composite_hdr_bind_group = create_hdr_bind_group(
+            gfx,
+            &composite_hdr_bind_group_layout,
+            &hdr_color_view,
+            &hdr_sampler,
+        );
 
-        let composite_shader = gfx.device.create_shader_module(ShaderModuleDescriptor {
-            label: Some("composite.wgsl"),
-            source: ShaderSource::Wgsl(Cow::Borrowed(include_wesl!("composite"))),
-        });
+        // *******************************
+        // Composite Pipeline
 
-        let composite_pipeline_layout =
-            gfx.device
-                .create_pipeline_layout(&PipelineLayoutDescriptor {
-                    label: None,
-                    bind_group_layouts: &[&hdr_bind_group_layout],
-                    immediate_size: 0,
-                });
+        let shader = gfx.create_shader_module("composite", include_wesl!("composite"));
 
-        let composite_pipeline = gfx
+        let layout = gfx
             .device
-            .create_render_pipeline(&RenderPipelineDescriptor {
-                label: Some("composite_pipeline"),
-                layout: Some(&composite_pipeline_layout),
-                vertex: VertexState {
-                    module: &composite_shader,
-                    entry_point: Some("vs_main"),
-                    compilation_options: PipelineCompilationOptions::default(),
-                    buffers: &[],
-                },
-                primitive: PrimitiveState {
-                    topology: wgpu::PrimitiveTopology::TriangleList,
-                    strip_index_format: None,
-                    front_face: wgpu::FrontFace::Ccw,
-                    cull_mode: None,
-                    unclipped_depth: false,
-                    polygon_mode: wgpu::PolygonMode::Fill,
-                    conservative: false,
-                },
-                depth_stencil: None,
-                multisample: MultisampleState {
-                    count: 1,
-                    mask: !0,
-                    alpha_to_coverage_enabled: false,
-                },
-                fragment: Some(FragmentState {
-                    module: &composite_shader,
-                    entry_point: Some("fs_main"),
-                    compilation_options: PipelineCompilationOptions::default(),
-                    targets: &[Some(ColorTargetState {
-                        format: gfx.surface_format,
-                        blend: Some(BlendState::REPLACE),
-                        write_mask: ColorWrites::ALL,
-                    })],
-                }),
-                multiview_mask: None,
-                cache: None,
+            .create_pipeline_layout(&PipelineLayoutDescriptor {
+                label: None,
+                bind_group_layouts: &[&composite_hdr_bind_group_layout],
+                immediate_size: 0,
             });
 
-        let camera_buffer = gfx.device.create_buffer(&BufferDescriptor {
-            label: Some("camera_buffer"),
-            size: size_of::<CameraUniform>() as u64,
-            usage: BufferUsages::UNIFORM | BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
+        let composite = create_post_processing_pipeline(
+            gfx,
+            "composite_pipeline",
+            layout,
+            shader,
+            gfx.surface_format,
+            Default::default(),
+        );
 
-        let camera_bind_group_layout =
+        // *****************************
+        // Sierpinski Pipeline
+
+        let fractal_frame_bind_group_layout =
             gfx.device
                 .create_bind_group_layout(&BindGroupLayoutDescriptor {
-                    label: Some("camera_bind_group_layout"),
-                    entries: &[BindGroupLayoutEntry {
-                        binding: 0,
-                        visibility: ShaderStages::VERTEX | ShaderStages::FRAGMENT,
-                        ty: BindingType::Buffer {
-                            ty: BufferBindingType::Uniform,
-                            has_dynamic_offset: false,
-                            min_binding_size: None,
+                    label: Some("frame_bind_group_layout"),
+                    entries: &[
+                        BindGroupLayoutEntry {
+                            binding: 0,
+                            visibility: ShaderStages::VERTEX | ShaderStages::FRAGMENT,
+                            ty: BindingType::Buffer {
+                                ty: BufferBindingType::Uniform,
+                                has_dynamic_offset: false,
+                                min_binding_size: None,
+                            },
+                            count: None,
                         },
-                        count: None,
-                    }],
+                        BindGroupLayoutEntry {
+                            binding: 1,
+                            visibility: ShaderStages::VERTEX | ShaderStages::FRAGMENT,
+                            ty: BindingType::Buffer {
+                                ty: BufferBindingType::Uniform,
+                                has_dynamic_offset: false,
+                                min_binding_size: None,
+                            },
+                            count: None,
+                        },
+                    ],
                 });
 
-        let camera_bind_group = gfx.device.create_bind_group(&BindGroupDescriptor {
-            label: Some("camera_buffer_bind_group"),
-            layout: &camera_bind_group_layout,
-            entries: &[BindGroupEntry {
-                binding: 0,
-                resource: BindingResource::Buffer(BufferBinding {
-                    buffer: &camera_buffer,
-                    offset: 0,
-                    size: None,
-                }),
-            }],
+        let fractal_frame_bind_group = gfx.device.create_bind_group(&BindGroupDescriptor {
+            label: Some("fractal_frame_bind_group"),
+            layout: &fractal_frame_bind_group_layout,
+            entries: &[
+                BindGroupEntry {
+                    binding: 0,
+                    resource: BindingResource::Buffer(BufferBinding {
+                        buffer: &camera_buffer,
+                        offset: 0,
+                        size: None,
+                    }),
+                },
+                BindGroupEntry {
+                    binding: 1,
+                    resource: BindingResource::Buffer(BufferBinding {
+                        buffer: &global_buffer,
+                        offset: 0,
+                        size: None,
+                    }),
+                },
+            ],
         });
 
-        let sierpinski_shader = gfx.device.create_shader_module(ShaderModuleDescriptor {
-            label: Some("sierpinski.wgsl"),
-            source: ShaderSource::Wgsl(Cow::Borrowed(include_wesl!("sierpinski"))),
-        });
+        let fractal_shader = gfx.create_shader_module("fractal", include_wesl!("fractal"));
 
-        let sierpinski_pipeline_layout =
-            gfx.device
-                .create_pipeline_layout(&PipelineLayoutDescriptor {
-                    label: None,
-                    bind_group_layouts: &[&camera_bind_group_layout],
-                    immediate_size: 0,
-                });
-
-        let sierpinski_pipeline = gfx
+        let layout = gfx
             .device
-            .create_render_pipeline(&RenderPipelineDescriptor {
-                label: Some("sierpinski_pipeline"),
-                layout: Some(&sierpinski_pipeline_layout),
-                vertex: VertexState {
-                    module: &sierpinski_shader,
-                    entry_point: Some("vs_main"),
-                    compilation_options: PipelineCompilationOptions::default(),
-                    buffers: &[],
-                },
-                primitive: PrimitiveState {
-                    topology: wgpu::PrimitiveTopology::TriangleList,
-                    strip_index_format: None,
-                    front_face: wgpu::FrontFace::Ccw,
-                    cull_mode: None,
-                    unclipped_depth: false,
-                    polygon_mode: wgpu::PolygonMode::Fill,
-                    conservative: false,
-                },
-                depth_stencil: None,
-                multisample: MultisampleState {
-                    count: 1,
-                    mask: !0,
-                    alpha_to_coverage_enabled: false,
-                },
-                fragment: Some(FragmentState {
-                    module: &sierpinski_shader,
-                    entry_point: Some("fs_main"),
-                    compilation_options: PipelineCompilationOptions::default(),
-                    targets: &[Some(ColorTargetState {
-                        format: HDR_COLOR_FORMAT,
-                        blend: Some(BlendState::REPLACE),
-                        write_mask: ColorWrites::ALL,
-                    })],
-                }),
-                multiview_mask: None,
-                cache: None,
+            .create_pipeline_layout(&PipelineLayoutDescriptor {
+                label: None,
+                bind_group_layouts: &[&fractal_frame_bind_group_layout],
+                immediate_size: 0,
             });
+
+        let sierpinski = create_post_processing_pipeline(
+            gfx,
+            "sierpinski",
+            layout,
+            fractal_shader,
+            HDR_COLOR_FORMAT,
+            Default::default(),
+        );
+
+        // ******************************
+        // Staging Belt
 
         let staging_belt = wgpu::util::StagingBelt::new(gfx.device.clone(), 1024);
 
         Self {
             physical_size,
+
             camera,
-
-            hdr_bind_group_layout,
-            composite_pipeline,
-
             camera_buffer,
-            camera_bind_group,
 
-            sierpinski_pipeline,
+            global_buffer,
 
             hdr_color,
             hdr_color_view,
             hdr_sampler,
-            hdr_bind_group,
+
+            composite,
+            composite_hdr_bind_group_layout,
+            composite_hdr_bind_group,
+
+            sierpinski,
+            sierpinski_frame_bind_group: fractal_frame_bind_group,
 
             staging_belt,
         }
@@ -259,9 +247,9 @@ impl RenderStack {
 
         self.hdr_color = create_hdr_color(gfx, physical_size[0], physical_size[1]);
         self.hdr_color_view = create_hdr_color_view(&self.hdr_color);
-        self.hdr_bind_group = create_hdr_bind_group(
+        self.composite_hdr_bind_group = create_hdr_bind_group(
             gfx,
-            &self.hdr_bind_group_layout,
+            &self.composite_hdr_bind_group_layout,
             &self.hdr_color_view,
             &self.hdr_sampler,
         );
@@ -273,27 +261,48 @@ impl RenderStack {
         world: &mut hecs::World,
         encoder: &mut wgpu::CommandEncoder,
     ) {
-        let camera = world.get::<&Camera>(self.camera).unwrap();
-        let transform = world.get::<&Transform>(self.camera).unwrap();
+        // Camera
+        {
+            let camera = world.get::<&Camera>(self.camera).unwrap();
+            let transform = world.get::<&Transform>(self.camera).unwrap();
 
-        let proj = camera.projection.get_clip_from_view();
-        let inv_proj = proj.inverse();
-        let view = transform.to_matrix().inverse();
-        let inv_view = transform.to_matrix();
+            let proj = camera.projection.get_clip_from_view();
+            let inv_proj = proj.inverse();
+            let view = transform.to_matrix().inverse();
+            let inv_view = transform.to_matrix();
 
-        let mut uniform = self.staging_belt.write_buffer(
-            encoder,
-            &self.camera_buffer,
-            0,
-            (size_of::<CameraUniform>() as u64).try_into().unwrap(),
-        );
-        uniform.copy_from_slice(bytemuck::cast_slice(&[CameraUniform {
-            proj,
-            view,
-            inv_proj,
-            inv_view,
-        }]));
-        drop(uniform);
+            let mut uniform = self.staging_belt.write_buffer(
+                encoder,
+                &self.camera_buffer,
+                0,
+                (size_of::<CameraUniform>() as u64).try_into().unwrap(),
+            );
+            uniform.copy_from_slice(bytemuck::cast_slice(&[CameraUniform {
+                proj,
+                view,
+                inv_proj,
+                inv_view,
+            }]));
+        }
+
+        // Global
+        {
+            let global = world
+                .query_mut::<&Global>()
+                .into_iter()
+                .next()
+                .unwrap_or(&Global::DEFAULT);
+
+            let time = global.time.as_secs_f32();
+
+            let mut uniform = self.staging_belt.write_buffer(
+                encoder,
+                &self.global_buffer,
+                0,
+                (size_of::<GlobalUniform>() as u64).try_into().unwrap(),
+            );
+            uniform.copy_from_slice(bytemuck::cast_slice(&[GlobalUniform { time }]));
+        }
 
         self.staging_belt.finish();
     }
@@ -322,8 +331,8 @@ impl RenderStack {
             depth_stencil_attachment: None,
             ..Default::default()
         });
-        render_pass.set_pipeline(&self.sierpinski_pipeline);
-        render_pass.set_bind_group(0, &self.camera_bind_group, &[]);
+        render_pass.set_pipeline(&self.sierpinski);
+        render_pass.set_bind_group(0, &self.sierpinski_frame_bind_group, &[]);
         render_pass.draw(0..3, 0..1);
         drop(render_pass);
     }
@@ -333,8 +342,8 @@ impl RenderStack {
     }
 
     pub fn draw_composite(&self, render_pass: &mut RenderPass<'static>) {
-        render_pass.set_pipeline(&self.composite_pipeline);
-        render_pass.set_bind_group(0, &self.hdr_bind_group, &[]);
+        render_pass.set_pipeline(&self.composite);
+        render_pass.set_bind_group(0, &self.composite_hdr_bind_group, &[]);
         render_pass.draw(0..3, 0..1);
     }
 }
@@ -397,4 +406,52 @@ fn create_hdr_bind_group(
             },
         ],
     })
+}
+
+fn create_post_processing_pipeline(
+    gfx: &Graphics,
+    name: &str,
+    layout: wgpu::PipelineLayout,
+    shader: wgpu::ShaderModule,
+    format: wgpu::TextureFormat,
+    options: PipelineCompilationOptions,
+) -> wgpu::RenderPipeline {
+    gfx.device
+        .create_render_pipeline(&RenderPipelineDescriptor {
+            label: Some(name),
+            layout: Some(&layout),
+            vertex: VertexState {
+                module: &shader,
+                entry_point: Some("vs_main"),
+                compilation_options: PipelineCompilationOptions::default(),
+                buffers: &[],
+            },
+            primitive: PrimitiveState {
+                topology: wgpu::PrimitiveTopology::TriangleList,
+                strip_index_format: None,
+                front_face: wgpu::FrontFace::Ccw,
+                cull_mode: None,
+                unclipped_depth: false,
+                polygon_mode: wgpu::PolygonMode::Fill,
+                conservative: false,
+            },
+            depth_stencil: None,
+            multisample: MultisampleState {
+                count: 1,
+                mask: !0,
+                alpha_to_coverage_enabled: false,
+            },
+            fragment: Some(FragmentState {
+                module: &shader,
+                entry_point: Some("fs_main"),
+                compilation_options: options,
+                targets: &[Some(ColorTargetState {
+                    format: format,
+                    blend: Some(BlendState::REPLACE),
+                    write_mask: ColorWrites::ALL,
+                })],
+            }),
+            multiview_mask: None,
+            cache: None,
+        })
 }

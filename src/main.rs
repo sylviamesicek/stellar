@@ -9,7 +9,7 @@ use winit::keyboard::{KeyCode, PhysicalKey};
 use winit::window::{Theme, Window, WindowId};
 
 pub mod app;
-pub mod camera;
+pub mod components;
 pub mod math;
 pub mod misc;
 pub mod renderer;

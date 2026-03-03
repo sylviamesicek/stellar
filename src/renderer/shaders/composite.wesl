@@ -345,13 +345,13 @@ fn vs_main(@builtin(vertex_index) vertex_index: u32) -> VertexOutput {
 
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
-    var hrd_color = textureSample(hdr_color, hdr_sampler, in.tex_coords);
+    var hrd_color: vec4f = textureSample(hdr_color, hdr_sampler, in.tex_coords);
 
     // Mostly taken from https://github.com/bevyengine/bevy/blob/main/crates/bevy_core_pipeline/src/tonemapping/tonemapping_shared.wgsl
 
 // #ifdef DEBAND_DITHER
     var output_rgb = tone_mapping(hrd_color).rgb;
-    output_rgb = powsafe(output_rgb.rgb, 1.0 / 2.2);
+    output_rgb = powsafe(output_rgb, 1.0 / 2.2);
     output_rgb = output_rgb + screen_space_dither(in.position.xy);
     // This conversion back to linear space is required because our output texture format is
     // SRGB; the GPU will assume our output is linear and will apply an SRGB conversion.

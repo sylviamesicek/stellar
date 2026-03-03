@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 use crate::math::{PerspectiveProjection, Projection};
 
 #[derive(Clone, Debug)]
@@ -24,5 +26,26 @@ impl Camera {
             projection: proj.into(),
             physical_size: [16, 16],
         }
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct Global {
+    pub time: Duration,
+}
+
+impl Global {
+    pub const DEFAULT: Self = Self {
+        time: Duration::ZERO,
+    };
+
+    pub fn new() -> Self {
+        Self::DEFAULT
+    }
+}
+
+impl Default for Global {
+    fn default() -> Self {
+        Self::DEFAULT
     }
 }

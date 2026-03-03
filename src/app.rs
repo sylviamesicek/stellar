@@ -6,25 +6,27 @@ use egui::epaint::ViewportInPixels;
 use glam::Vec3;
 use hecs::World;
 
-use crate::camera::Camera;
+use crate::components::{Camera, Global};
 use crate::math::Transform;
 use crate::renderer::{DrawCameraCallback, UiCallback};
 
 pub struct App {
     camera: hecs::Entity,
+    global: hecs::Entity,
 }
 
 impl App {
     pub fn new() -> Self {
         Self {
             camera: hecs::Entity::DANGLING,
+            global: hecs::Entity::DANGLING,
         }
     }
 
     pub fn ui_context(&self) -> egui::Context {
         let ctx = egui::Context::default();
 
-        // toolkit::apply_style_and_install_loaders(&ctx);
+        // toolkit::``apply_style_and_install_loaders``(&ctx);
 
         ctx
     }
@@ -36,6 +38,7 @@ impl App {
                 .add(Camera::perspective(f32::consts::PI / 2.0, 0.1, 1000.0))
                 .build(),
         );
+        self.global = world.spawn(hecs::EntityBuilder::new().add(Global::default()).build());
     }
 
     pub fn update(
@@ -43,8 +46,13 @@ impl App {
         world: &mut World,
         ctx: egui::Context,
         screen: [u32; 2],
-        _delta_time: Duration,
+        delta_time: Duration,
     ) {
+        // Advance timer forwards
+        for timer in world.query_mut::<&mut Global>() {
+            timer.time += delta_time;
+        }
+
         // egui::Window::new("Stellar")
         //     .resizable(true)
         //     .show(&ctx, |ui| {

@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use crate::camera::Camera;
+use crate::components::Camera;
 use crate::math::Transform;
 use hecs::Entity;
 use smallvec::SmallVec;
