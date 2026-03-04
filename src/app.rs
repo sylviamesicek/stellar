@@ -146,6 +146,22 @@ impl App {
                             return;
                         }
 
+                        let response = ui.interact(
+                            rect,
+                            egui::Id::new("viewport_interaction"),
+                            egui::Sense::all(),
+                        );
+
+                        if response.clicked() {
+                            log::info!("Clicked");
+                        }
+
+                        if response.dragged() {
+                            log::info!("Being dragged, TOtal: {}", {
+                                response.total_drag_delta().unwrap()
+                            });
+                        }
+
                         // Update Camera
                         let mut camera = world.get::<&mut Camera>(self.camera).unwrap();
                         camera.update(viewport.width_px as u32, viewport.height_px as u32);
@@ -155,7 +171,7 @@ impl App {
                             rect,
                             DrawCameraCallback::new(self.camera),
                         ));
-                    })
+                    });
             });
 
         if self.show_post_processing {

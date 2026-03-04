@@ -161,6 +161,19 @@ fn ray_marcher(ro: vec3f, rd: vec3f) -> vec4f {
 
     let iterations = f32(steps) + log(log(maximum_distance)) / log(2.0) - log(log(dot(cur_pos, cur_pos))) / log(2.0);
 
+    // if hit && fractal_type == 1 {
+    //     color = vec3(0.8 + length(cur_pos) / 8.5, 1.0, 0.8);
+    //     color = hsv2rgb(color);
+    // } else if hit && fractal_type == 0 {
+    //     color = vec3(0.8 + length(cur_pos) / 0.5, 1.0, 0.8);
+    //     color = hsv2rgb(color);
+    // } else if fractal_type == 0 {
+    //     color = vec3(0.8 + length(min_dist_to_sceen_pos) / 0.5, 1.0, 0.8);
+    //     color = hsv2rgb(color);
+    //     color *= 1.0 / (min_dist_to_scene * min_dist_to_scene);
+    //     color /= map(sin(global.time * 3.0), -1.0, 1.0, 3000.0, 50000.0);
+    // }
+
     if fractal_type == 1 {
         if hit {
             color = vec3(0.8 + length(cur_pos) / 8.5, 1.0, 0.8);

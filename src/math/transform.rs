@@ -46,6 +46,10 @@ impl Transform {
         Mat4::from_scale_rotation_translation(self.scale, self.rotation, self.translation)
     }
 
+    pub fn to_scale_rotation_translation(&self) -> (Vec3, Quat, Vec3) {
+        (self.scale, self.rotation, self.translation)
+    }
+
     /// Get the unit vector in the local `X` direction.
     #[inline]
     pub fn local_x(&self) -> Vec3 {

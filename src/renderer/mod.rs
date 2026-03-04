@@ -87,10 +87,10 @@ impl Renderer {
             let stack = self
                 .stacks
                 .entry(e)
-                .or_insert_with(|| RenderStack::new(gfx, e, camera.physical_size));
+                .or_insert_with(|| RenderStack::new(gfx, e, camera.physical_size()));
 
-            if camera.physical_size != stack.physical_size {
-                stack.resize(gfx, camera.physical_size);
+            if camera.physical_size() != stack.physical_size {
+                stack.resize(gfx, camera.physical_size());
             }
         }
 

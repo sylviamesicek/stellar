@@ -1,13 +1,15 @@
 use std::time::Duration;
 
-use crate::math::{PerspectiveProjection, Projection};
+use crate::math::{PerspectiveProjection, Projection, Rect};
+
+mod editor_controller;
 
 #[derive(Clone, Debug)]
 pub struct Camera {
     /// Projection matrix for camera
     pub projection: Projection,
     /// Current physical size of the camera render target
-    pub physical_size: [u32; 2],
+    physical_size: [u32; 2],
 }
 
 impl Camera {
@@ -26,6 +28,14 @@ impl Camera {
             projection: proj.into(),
             physical_size: [16, 16],
         }
+    }
+
+    pub fn physical_size(&self) -> [u32; 2] {
+        self.physical_size
+    }
+
+    pub fn logical_size(&self) -> glam::Vec2 {
+        todo!()
     }
 }
 
