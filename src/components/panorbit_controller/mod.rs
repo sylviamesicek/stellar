@@ -192,7 +192,7 @@ impl Default for PanOrbitController {
             pitch: None,
             target_yaw: 0.0,
             target_pitch: 0.0,
-            target_radius: 1.0,
+            target_radius: 10.0,
             initialized: false,
             yaw_upper_limit: None,
             yaw_lower_limit: None,
@@ -327,7 +327,7 @@ pub fn update_pan_orbit_camera(
 
         orbit = input_orbit * controller.orbit_sensitivity;
         pan = input_pan * controller.pan_sensitivity;
-        // scroll = state.zoom_delta() * controller.zoom_sensitivity;
+        scroll = (state.zoom_delta() - 1.0) * controller.zoom_sensitivity;
     }
 
     // 2 - Process input into target yaw/pitch, or focus, radius
@@ -386,15 +386,12 @@ pub fn update_pan_orbit_camera(
     if scroll.abs() > 0.0 {
         // Calculate the impact of scrolling on the reference value
         let line_delta = -scroll * (controller.target_radius) * 0.2;
-        let pixel_delta = -scroll * (controller.target_radius) * 0.2;
 
         // Update the target value
-        controller.target_radius += line_delta + pixel_delta;
+        controller.target_radius += line_delta;
 
         // If it is pixel-based scrolling, add it directly to the current value
-        controller.radius = controller
-            .radius
-            .map(|value| apply_zoom_limits(value + pixel_delta));
+        controller.radius = controller.radius.map(|value| apply_zoom_limits(value));
 
         has_moved = true;
     }

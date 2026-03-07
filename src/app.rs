@@ -135,6 +135,17 @@ impl App {
                 ui.add(egui::Slider::new(&mut transform.translation[0], -5.0..=5.0));
                 ui.add(egui::Slider::new(&mut transform.translation[1], -5.0..=5.0));
                 ui.add(egui::Slider::new(&mut transform.translation[2], 0.0..=10.0));
+
+                // let controller = world.get::<&PanOrbitController>(self.camera).unwrap();
+
+                // let mut zoom_delta = 0.0;
+                // ui.input(|input| zoom_delta = input.zoom_delta());
+                // ui.label(format!(
+                //     "{}, {:?}, {}",
+                //     controller.target_radius, controller.radius, zoom_delta
+                // ));
+
+                // drop(controller);
             }
         });
 
@@ -162,6 +173,10 @@ impl App {
                             egui::Sense::all(),
                         );
 
+                        if response.clicked() {
+                            response.request_focus();
+                        }
+
                         // if response.clicked() {
                         //     log::info!("Clicked");
                         // }
@@ -179,7 +194,7 @@ impl App {
 
                         let mut controller =
                             world.get::<&mut PanOrbitController>(self.camera).unwrap();
-                        controller.enabled = response.enabled();
+                        controller.enabled = response.has_focus();
                         drop(controller);
 
                         ui.painter().add(UiCallback::new_paint_callback(
