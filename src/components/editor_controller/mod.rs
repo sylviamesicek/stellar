@@ -6,4 +6,4 @@ mod projections;
 mod smoothing;
 mod zoom;
 
-use momentum::{Momentum, Velocity};
+use momentum::Velocity;

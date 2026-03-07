@@ -6,7 +6,7 @@ use egui::epaint::ViewportInPixels;
 use glam::Vec3;
 use hecs::World;
 
-use crate::components::{Camera, Global};
+use crate::components::{Camera, Global, PanOrbitController, update_pan_orbit_camera};
 use crate::math::Transform;
 use crate::renderer::{DrawCameraCallback, UiCallback};
 
@@ -56,6 +56,7 @@ impl App {
             hecs::EntityBuilder::new()
                 .add(Transform::from_xyz(0.0, 0.0, 4.0).looking_at(Vec3::ZERO, Vec3::Y))
                 .add(Camera::perspective(f32::consts::PI / 2.0, 0.1, 1000.0))
+                .add(PanOrbitController::default())
                 .build(),
         );
         self.global = world.spawn(hecs::EntityBuilder::new().add(Global::default()).build());
@@ -71,6 +72,15 @@ impl App {
         // Advance timer forwards
         for timer in world.query_mut::<&mut Global>() {
             timer.time += delta_time;
+        }
+
+        // Update cameras
+        for (transform, camera, controller) in
+            world.query_mut::<(&mut Transform, &mut Camera, &mut PanOrbitController)>()
+        {
+            ctx.input(|input| {
+                update_pan_orbit_camera(input, delta_time, transform, camera, controller);
+            });
         }
 
         // egui::Window::new("Stellar")
@@ -152,20 +162,25 @@ impl App {
                             egui::Sense::all(),
                         );
 
-                        if response.clicked() {
-                            log::info!("Clicked");
-                        }
+                        // if response.clicked() {
+                        //     log::info!("Clicked");
+                        // }
 
-                        if response.dragged() {
-                            log::info!("Being dragged, TOtal: {}", {
-                                response.total_drag_delta().unwrap()
-                            });
-                        }
+                        // if response.dragged() {
+                        //     log::info!("Being dragged, TOtal: {}", {
+                        //         response.total_drag_delta().unwrap()
+                        //     });
+                        // }
 
                         // Update Camera
                         let mut camera = world.get::<&mut Camera>(self.camera).unwrap();
                         camera.update(viewport.width_px as u32, viewport.height_px as u32);
                         drop(camera);
+
+                        let mut controller =
+                            world.get::<&mut PanOrbitController>(self.camera).unwrap();
+                        controller.enabled = response.enabled();
+                        drop(controller);
 
                         ui.painter().add(UiCallback::new_paint_callback(
                             rect,

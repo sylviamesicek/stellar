@@ -1,8 +1,11 @@
 use std::time::Duration;
 
-use crate::math::{PerspectiveProjection, Projection, Rect};
+use crate::math::{PerspectiveProjection, Projection};
 
 mod editor_controller;
+mod panorbit_controller;
+
+pub use panorbit_controller::{PanOrbitController, update_pan_orbit_camera};
 
 #[derive(Clone, Debug)]
 pub struct Camera {
