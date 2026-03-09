@@ -43,12 +43,20 @@ impl Camera {
 }
 
 #[derive(Clone, Debug)]
+pub enum Pipeline {
+    Mandlebulb,
+    Sierpinski,
+}
+
+#[derive(Clone, Debug)]
 pub struct Global {
     pub time: Duration,
     pub pre_saturation: f32,
     pub post_saturation: f32,
     pub gamma: f32,
     pub exposure: f32,
+
+    pub pipeline: Pipeline,
 }
 
 impl Global {
@@ -58,6 +66,7 @@ impl Global {
         post_saturation: 1.0,
         gamma: 1.0,
         exposure: 0.0,
+        pipeline: Pipeline::Mandlebulb,
     };
 
     pub fn new() -> Self {

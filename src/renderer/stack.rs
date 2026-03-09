@@ -1,12 +1,10 @@
 use wesl::include_wesl;
 use wgpu::{
     AddressMode, BindGroupDescriptor, BindGroupEntry, BindGroupLayout, BindGroupLayoutDescriptor,
-    BindGroupLayoutEntry, BindingResource, BindingType, BlendState, BufferBinding,
-    BufferBindingType, BufferDescriptor, BufferUsages, ColorTargetState, ColorWrites, FilterMode,
-    FragmentState, MipmapFilterMode, MultisampleState, PipelineCompilationOptions,
-    PipelineLayoutDescriptor, PrimitiveState, RenderPass, RenderPipelineDescriptor, Sampler,
+    BindGroupLayoutEntry, BindingResource, BindingType, BufferBinding, BufferBindingType,
+    BufferDescriptor, BufferUsages, FilterMode, MipmapFilterMode, RenderPass, Sampler,
     SamplerBindingType, SamplerDescriptor, ShaderStages, TextureSampleType, TextureView,
-    TextureViewDescriptor, TextureViewDimension, VertexState,
+    TextureViewDescriptor, TextureViewDimension,
 };
 
 use super::Graphics;
@@ -15,8 +13,6 @@ use crate::{
     math::Transform,
 };
 use glam::Mat4;
-
-const HDR_COLOR_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
 
 #[derive(Debug, Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
 #[repr(C)]
@@ -190,14 +186,14 @@ impl RenderStack {
         let fractal_layout = gfx.create_pipeline_layout(0, &[&frame_bind_group_layout]);
 
         let mandlebulb = gfx
-            .post_processing_pipeline(&fractal_shader, HDR_COLOR_FORMAT)
+            .post_processing_pipeline(&fractal_shader, gfx.hdr_format)
             .name("sierpinski")
             .layout(&fractal_layout)
             .add_constant("fractal_type", 0.0)
             .build();
 
         let sierpinski = gfx
-            .post_processing_pipeline(&fractal_shader, HDR_COLOR_FORMAT)
+            .post_processing_pipeline(&fractal_shader, gfx.hdr_format)
             .name("sierpinski")
             .layout(&fractal_layout)
             .add_constant("fractal_type", 1.0)
@@ -312,9 +308,20 @@ impl RenderStack {
     pub fn render(
         &mut self,
         _gfx: &Graphics,
-        _world: &mut hecs::World,
+        world: &mut hecs::World,
         encoder: &mut wgpu::CommandEncoder,
     ) {
+        let global = world
+            .query_mut::<&Global>()
+            .into_iter()
+            .next()
+            .unwrap_or(&Global::DEFAULT);
+
+        let fractal_index = match global.pipeline {
+            crate::components::Pipeline::Mandlebulb => 0,
+            crate::components::Pipeline::Sierpinski => 1,
+        };
+
         let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                 view: &self.hdr_color_view,
@@ -333,7 +340,7 @@ impl RenderStack {
             depth_stencil_attachment: None,
             ..Default::default()
         });
-        render_pass.set_pipeline(&self.fractal[0]);
+        render_pass.set_pipeline(&self.fractal[fractal_index]);
         render_pass.set_bind_group(0, &self.frame_bind_group, &[]);
         render_pass.draw(0..3, 0..1);
         drop(render_pass);
@@ -362,7 +369,7 @@ fn create_hdr_color(gfx: &Graphics, width: u32, height: u32) -> wgpu::Texture {
         mip_level_count: 1,
         sample_count: 1,
         dimension: wgpu::TextureDimension::D2,
-        format: HDR_COLOR_FORMAT,
+        format: gfx.hdr_format,
         usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
         view_formats: &[],
     });

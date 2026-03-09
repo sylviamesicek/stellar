@@ -6,8 +6,8 @@ use egui::epaint::ViewportInPixels;
 use glam::Vec3;
 use hecs::World;
 
-use crate::components::{Camera, Global, PanOrbitController, update_pan_orbit_camera};
-use crate::math::Transform;
+use crate::components::{Camera, Global, PanOrbitController, Pipeline, update_pan_orbit_camera};
+use crate::math::{Projection, Transform};
 use crate::renderer::{DrawCameraCallback, UiCallback};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -69,12 +69,12 @@ impl App {
         screen: [u32; 2],
         delta_time: Duration,
     ) {
-        // Advance timer forwards
+        // Update timers
         for timer in world.query_mut::<&mut Global>() {
             timer.time += delta_time;
         }
 
-        // Update cameras
+        // Update camera positions
         for (transform, camera, controller) in
             world.query_mut::<(&mut Transform, &mut Camera, &mut PanOrbitController)>()
         {
@@ -91,6 +91,7 @@ impl App {
         //         ui.allocate_space(ui.available_size())
         //     });
 
+        // Draw Top panel
         egui::TopBottomPanel::top("top").show(&ctx, |ui| {
             egui::containers::menu::MenuBar::new().ui(ui, |ui| {
                 ui.menu_button("Simulation", |ui| {
@@ -104,6 +105,7 @@ impl App {
             });
         });
 
+        // Draw info panel
         egui::SidePanel::left("left").show(&ctx, |ui| {
             // ui.allocate_space(ui.available_size())
             if self.simulation == Simulation::Fractal {
@@ -126,15 +128,31 @@ impl App {
                                 "Sierpinski",
                             );
                         });
-                });
 
-                let mut transform = world.get::<&mut Transform>(self.camera).unwrap();
+                    let mut global = world.get::<&mut Global>(self.global).unwrap();
+                    match self.fractal {
+                        Fractal::Sierpinski => global.pipeline = Pipeline::Sierpinski,
+                        Fractal::Mandlebulb => global.pipeline = Pipeline::Mandlebulb,
+                    }
+                });
 
                 ui.heading("Camera");
 
+                let mut transform = world.get::<&mut Transform>(self.camera).unwrap();
                 ui.add(egui::Slider::new(&mut transform.translation[0], -5.0..=5.0));
                 ui.add(egui::Slider::new(&mut transform.translation[1], -5.0..=5.0));
                 ui.add(egui::Slider::new(&mut transform.translation[2], 0.0..=10.0));
+
+                let mut camera = world.get::<&mut Camera>(self.camera).unwrap();
+
+                match &mut camera.projection {
+                    Projection::Perspective(perspective_projection) => {
+                        let mut fov_degree = perspective_projection.fov.to_degrees();
+                        ui.add(egui::Slider::new(&mut fov_degree, 15.0..=150.0).text("FoV"));
+                        perspective_projection.fov = fov_degree.to_radians();
+                    }
+                    Projection::Orthographic(_) => {}
+                }
 
                 // let controller = world.get::<&PanOrbitController>(self.camera).unwrap();
 
@@ -149,6 +167,7 @@ impl App {
             }
         });
 
+        // Draw central viewport
         egui::CentralPanel::default()
             .frame(egui::Frame::NONE)
             .show(&ctx, |ui| {
@@ -173,19 +192,9 @@ impl App {
                             egui::Sense::all(),
                         );
 
-                        if response.clicked() {
+                        if response.clicked() || response.dragged() {
                             response.request_focus();
                         }
-
-                        // if response.clicked() {
-                        //     log::info!("Clicked");
-                        // }
-
-                        // if response.dragged() {
-                        //     log::info!("Being dragged, TOtal: {}", {
-                        //         response.total_drag_delta().unwrap()
-                        //     });
-                        // }
 
                         // Update Camera
                         let mut camera = world.get::<&mut Camera>(self.camera).unwrap();
@@ -204,6 +213,7 @@ impl App {
                     });
             });
 
+        // Draw post-processing window
         if self.show_post_processing {
             egui::Window::new("Post-Processing")
                 .open(&mut self.show_post_processing)

@@ -10,7 +10,9 @@ pub struct Graphics {
 
     pub surface: wgpu::Surface<'static>,
     pub surface_config: wgpu::SurfaceConfiguration,
+
     pub surface_format: wgpu::TextureFormat,
+    pub hdr_format: wgpu::TextureFormat,
 
     fullscreen_shader: wgpu::ShaderModule,
 }
@@ -37,7 +39,7 @@ impl Graphics {
                 label: Some("GPU Device"),
                 memory_hints: wgpu::MemoryHints::Performance,
                 required_features: wgpu::Features {
-                    features_wgpu: wgpu::FeaturesWGPU::default(),
+                    features_wgpu: wgpu::FeaturesWGPU::TEXTURE_ADAPTER_SPECIFIC_FORMAT_FEATURES,
                     features_webgpu: wgpu::FeaturesWebGPU::default(),
                 },
                 required_limits: wgpu::Limits::defaults().using_resolution(adapter.limits()),
@@ -75,6 +77,26 @@ impl Graphics {
 
         surface.configure(&device, &surface_config);
 
+        let hdr_format_candidates = [
+            wgpu::TextureFormat::Rgba16Float,
+            wgpu::TextureFormat::Rgba8Unorm,
+        ];
+
+        let hdr_format = hdr_format_candidates
+            .into_iter()
+            .find(|format| {
+                adapter
+                    .get_texture_format_features(*format)
+                    .allowed_usages
+                    .contains(
+                        wgpu::TextureUsages::RENDER_ATTACHMENT
+                            | wgpu::TextureUsages::TEXTURE_BINDING,
+                    )
+            })
+            .expect("Unable to find valid HDR texture format for post-processing");
+
+        log::info!("HDR format: {:?}", hdr_format);
+
         let fullscreen_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("fullscreen"),
             source: wgpu::ShaderSource::Wgsl(Cow::Borrowed(include_wesl!("fullscreen"))),
@@ -87,6 +109,7 @@ impl Graphics {
             queue,
             surface_config,
             surface_format,
+            hdr_format,
             fullscreen_shader,
         }
     }
@@ -159,7 +182,7 @@ impl<'a> PostProcessingBuilder<'a> {
         self
     }
 
-    pub fn build(mut self) -> wgpu::RenderPipeline {
+    pub fn build(self) -> wgpu::RenderPipeline {
         self.gfx
             .device
             .create_render_pipeline(&wgpu::RenderPipelineDescriptor {

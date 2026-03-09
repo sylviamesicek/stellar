@@ -25,7 +25,17 @@ fn main() -> eyre::Result<()> {
     env_logger::builder()
         .filter_level(log::LevelFilter::Info)
         .write_style(env_logger::WriteStyle::Always)
-        .format(move |buf, record| writeln!(buf, "[{}]: {}", record.level(), record.args()))
+        .format(move |buf, record| {
+            let level_style = buf.default_level_style(record.level());
+
+            writeln!(
+                buf,
+                "{level_style}[{}]{level_style:#}: {}",
+                record.level(),
+                record.args()
+            )
+        })
+        .write_style(env_logger::WriteStyle::Always)
         .init();
     // Create the event loop and run the app
     let event_loop = EventLoop::builder().build()?;
