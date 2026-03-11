@@ -13,6 +13,7 @@ pub struct Graphics {
 
     pub surface_format: wgpu::TextureFormat,
     pub hdr_format: wgpu::TextureFormat,
+    pub bloom_format: wgpu::TextureFormat,
 
     fullscreen_shader: wgpu::ShaderModule,
 }
@@ -34,13 +35,23 @@ impl Graphics {
             .await
             .expect("Failed to request gpu adapter");
 
+        let wgpu::Features {
+            features_wgpu,
+            features_webgpu,
+        } = adapter.features();
+
+        assert!(
+            features_wgpu.contains(wgpu::FeaturesWGPU::TEXTURE_ADAPTER_SPECIFIC_FORMAT_FEATURES)
+        );
+        assert!(features_webgpu.contains(wgpu::FeaturesWebGPU::RG11B10UFLOAT_RENDERABLE));
+
         let (device, queue) = adapter
             .request_device(&wgpu::DeviceDescriptor {
                 label: Some("GPU Device"),
                 memory_hints: wgpu::MemoryHints::Performance,
                 required_features: wgpu::Features {
                     features_wgpu: wgpu::FeaturesWGPU::TEXTURE_ADAPTER_SPECIFIC_FORMAT_FEATURES,
-                    features_webgpu: wgpu::FeaturesWebGPU::default(),
+                    features_webgpu: wgpu::FeaturesWebGPU::RG11B10UFLOAT_RENDERABLE,
                 },
                 required_limits: wgpu::Limits::defaults().using_resolution(adapter.limits()),
                 experimental_features: wgpu::ExperimentalFeatures::disabled(),
@@ -97,6 +108,27 @@ impl Graphics {
 
         log::info!("HDR format: {:?}", hdr_format);
 
+        let bloom_format_candidates = [
+            wgpu::TextureFormat::Rg11b10Ufloat,
+            wgpu::TextureFormat::Rgba16Float,
+            wgpu::TextureFormat::Rgba8Unorm,
+        ];
+
+        let bloom_format = bloom_format_candidates
+            .into_iter()
+            .find(|format| {
+                adapter
+                    .get_texture_format_features(*format)
+                    .allowed_usages
+                    .contains(
+                        wgpu::TextureUsages::RENDER_ATTACHMENT
+                            | wgpu::TextureUsages::TEXTURE_BINDING,
+                    )
+            })
+            .expect("Unable to find valid bloom texture format for post-processing");
+
+        log::info!("Bloom format: {:?}", bloom_format);
+
         let fullscreen_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("fullscreen"),
             source: wgpu::ShaderSource::Wgsl(Cow::Borrowed(include_wesl!("fullscreen"))),
@@ -110,6 +142,7 @@ impl Graphics {
             surface_config,
             surface_format,
             hdr_format,
+            bloom_format,
             fullscreen_shader,
         }
     }
@@ -144,15 +177,16 @@ impl Graphics {
     pub fn post_processing_pipeline<'a>(
         &'a self,
         shader: &'a wgpu::ShaderModule,
-        format: wgpu::TextureFormat,
     ) -> PostProcessingBuilder<'a> {
         PostProcessingBuilder {
             gfx: self,
             shader: shader,
-            color_format: format,
+            color_format: self.hdr_format,
+            color_blend_state: None,
             name: None,
             layout: None,
             constants: SmallVec::new(),
+            entry_point: None,
         }
     }
 }
@@ -161,9 +195,11 @@ pub struct PostProcessingBuilder<'a> {
     gfx: &'a Graphics,
     shader: &'a wgpu::ShaderModule,
     color_format: wgpu::TextureFormat,
+    color_blend_state: Option<wgpu::BlendState>,
     name: Option<&'a str>,
     layout: Option<&'a wgpu::PipelineLayout>,
     constants: SmallVec<[(&'a str, f64); 4]>,
+    entry_point: Option<&'a str>,
 }
 
 impl<'a> PostProcessingBuilder<'a> {
@@ -177,8 +213,23 @@ impl<'a> PostProcessingBuilder<'a> {
         self
     }
 
+    pub fn color_format(mut self, format: wgpu::TextureFormat) -> Self {
+        self.color_format = format;
+        self
+    }
+
+    pub fn color_blend_state(mut self, state: wgpu::BlendState) -> Self {
+        self.color_blend_state = Some(state);
+        self
+    }
+
     pub fn add_constant(mut self, name: &'a str, value: f64) -> Self {
         self.constants.push((name, value));
+        self
+    }
+
+    pub fn entry_point(mut self, name: &'a str) -> Self {
+        self.entry_point = Some(name);
         self
     }
 
@@ -211,14 +262,14 @@ impl<'a> PostProcessingBuilder<'a> {
                 },
                 fragment: Some(wgpu::FragmentState {
                     module: &self.shader,
-                    entry_point: Some("fs_main"),
+                    entry_point: self.entry_point,
                     compilation_options: wgpu::PipelineCompilationOptions {
                         constants: &self.constants,
                         ..Default::default()
                     },
                     targets: &[Some(wgpu::ColorTargetState {
                         format: self.color_format,
-                        blend: Some(wgpu::BlendState::REPLACE),
+                        blend: self.color_blend_state,
                         write_mask: wgpu::ColorWrites::ALL,
                     })],
                 }),

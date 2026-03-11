@@ -1,4 +1,3 @@
-@id(0)
 override output_linear: bool = false;
 
 @group(0) @binding(0)

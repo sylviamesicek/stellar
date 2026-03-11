@@ -12,7 +12,7 @@ use crate::{
     components::{Camera, Global},
     math::Transform,
 };
-use glam::Mat4;
+use glam::{Mat4, Vec2, Vec4};
 
 #[derive(Debug, Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
 #[repr(C)]
@@ -34,6 +34,16 @@ pub struct GlobalUniform {
     exposure: f32,
 }
 
+#[derive(Debug, Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
+#[repr(C)]
+pub struct BloomUniform {
+    threshold_precomputations: Vec4,
+    viewport: Vec4,
+    scale: Vec2,
+    aspect: f32,
+    _unused: f32,
+}
+
 #[derive(Debug)]
 pub struct RenderStack {
     pub physical_size: [u32; 2],
@@ -41,24 +51,31 @@ pub struct RenderStack {
     // Camera data
     camera: hecs::Entity,
     camera_buffer: wgpu::Buffer,
-
     // Global Params Data
     global_buffer: wgpu::Buffer,
-
     frame_bind_group: wgpu::BindGroup,
+    // Bloom data
+    bloom_buffer: wgpu::Buffer,
+    bloom_bind_group: wgpu::BindGroup,
 
     // HDR color texture (primary render target)
     hdr_color: wgpu::Texture,
     hdr_color_view: TextureView,
     hdr_sampler: wgpu::Sampler,
+    hdr_bind_group_layout: BindGroupLayout,
+    hdr_bind_group: wgpu::BindGroup,
 
     // Sierpinksi Pipeline
     fractal: [wgpu::RenderPipeline; 2],
 
+    // Bloom Pipelines
+    bloom_downsample_first: wgpu::RenderPipeline,
+    bloom_downsample_main: wgpu::RenderPipeline,
+    bloom_upsample_main: wgpu::RenderPipeline,
+    bloom_upsample_last: wgpu::RenderPipeline,
+
     // Composite Pipeline
     composite: wgpu::RenderPipeline,
-    composite_hdr_bind_group_layout: BindGroupLayout,
-    composite_hdr_bind_group: wgpu::BindGroup,
 
     staging_belt: wgpu::util::StagingBelt,
 }
@@ -130,11 +147,47 @@ impl RenderStack {
             ],
         });
 
+        let bloom_buffer = gfx.device.create_buffer(&BufferDescriptor {
+            label: Some("bloom_buffer"),
+            size: size_of::<BloomUniform>() as u64,
+            usage: BufferUsages::UNIFORM | BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
+        let bloom_bind_group_layout =
+            gfx.device
+                .create_bind_group_layout(&BindGroupLayoutDescriptor {
+                    label: Some("bloom_bind_group_layout"),
+                    entries: &[BindGroupLayoutEntry {
+                        binding: 0,
+                        visibility: ShaderStages::VERTEX | ShaderStages::FRAGMENT,
+                        ty: BindingType::Buffer {
+                            ty: BufferBindingType::Uniform,
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    }],
+                });
+
+        let bloom_bind_group = gfx.device.create_bind_group(&BindGroupDescriptor {
+            label: Some("bloom_bind_group"),
+            layout: &bloom_bind_group_layout,
+            entries: &[BindGroupEntry {
+                binding: 0,
+                resource: BindingResource::Buffer(BufferBinding {
+                    buffer: &bloom_buffer,
+                    offset: 0,
+                    size: None,
+                }),
+            }],
+        });
+
         let hdr_color = create_hdr_color(gfx, physical_size[0], physical_size[1]);
         let hdr_color_view = create_hdr_color_view(&hdr_color);
         let hdr_sampler = create_hdr_sampler(gfx);
 
-        let composite_hdr_bind_group_layout =
+        let hdr_bind_group_layout =
             gfx.device
                 .create_bind_group_layout(&BindGroupLayoutDescriptor {
                     label: Some("hdr_bind_group_layout"),
@@ -158,24 +211,79 @@ impl RenderStack {
                     ],
                 });
 
-        let composite_hdr_bind_group = create_hdr_bind_group(
-            gfx,
-            &composite_hdr_bind_group_layout,
-            &hdr_color_view,
-            &hdr_sampler,
-        );
+        let hdr_bind_group =
+            create_hdr_bind_group(gfx, &hdr_bind_group_layout, &hdr_color_view, &hdr_sampler);
+
+        // *******************************
+        // Bloom Pipelines
+
+        let bloom_shader = gfx.create_shader_module("bloom", include_wesl!("bloom"));
+        let bloom_layout =
+            gfx.create_pipeline_layout(0, &[&hdr_bind_group_layout, &bloom_bind_group_layout]);
+
+        let bloom_downsample_first = gfx
+            .post_processing_pipeline(&bloom_shader)
+            .name("bloom_downsample_first")
+            .color_format(gfx.bloom_format)
+            .layout(&bloom_layout)
+            .add_constant("first_downsample", 1.0)
+            .entry_point("downsample")
+            .build();
+
+        let bloom_downsample_main = gfx
+            .post_processing_pipeline(&bloom_shader)
+            .name("bloom_downsample_main")
+            .color_format(gfx.bloom_format)
+            .layout(&bloom_layout)
+            .entry_point("downsample")
+            .build();
+
+        let color_blend = wgpu::BlendComponent {
+            src_factor: wgpu::BlendFactor::Constant,
+            dst_factor: wgpu::BlendFactor::One,
+            operation: wgpu::BlendOperation::Add,
+        };
+
+        let alpha_blend = wgpu::BlendComponent {
+            src_factor: wgpu::BlendFactor::Zero,
+            dst_factor: wgpu::BlendFactor::One,
+            operation: wgpu::BlendOperation::Add,
+        };
+
+        let bloom_upsample_main = gfx
+            .post_processing_pipeline(&bloom_shader)
+            .name("bloom_upsample_main")
+            .color_format(gfx.bloom_format)
+            .color_blend_state(wgpu::BlendState {
+                color: color_blend,
+                alpha: alpha_blend,
+            })
+            .layout(&bloom_layout)
+            .entry_point("upsample")
+            .build();
+
+        let bloom_upsample_last = gfx
+            .post_processing_pipeline(&bloom_shader)
+            .name("bloom_upsample_last")
+            .color_format(gfx.hdr_format)
+            .color_blend_state(wgpu::BlendState {
+                color: color_blend,
+                alpha: alpha_blend,
+            })
+            .layout(&bloom_layout)
+            .entry_point("upsample")
+            .build();
 
         // *******************************
         // Composite Pipeline
 
         let composite_shader = gfx.create_shader_module("composite", include_wesl!("composite"));
-        let composite_layout = gfx.create_pipeline_layout(
-            0,
-            &[&composite_hdr_bind_group_layout, &frame_bind_group_layout],
-        );
+        let composite_layout =
+            gfx.create_pipeline_layout(0, &[&hdr_bind_group_layout, &frame_bind_group_layout]);
         let composite = gfx
-            .post_processing_pipeline(&composite_shader, gfx.surface_format)
+            .post_processing_pipeline(&composite_shader)
             .name("composite")
+            .color_format(gfx.surface_format)
             .layout(&composite_layout)
             .build();
 
@@ -186,15 +294,17 @@ impl RenderStack {
         let fractal_layout = gfx.create_pipeline_layout(0, &[&frame_bind_group_layout]);
 
         let mandlebulb = gfx
-            .post_processing_pipeline(&fractal_shader, gfx.hdr_format)
+            .post_processing_pipeline(&fractal_shader)
             .name("sierpinski")
+            .color_format(gfx.hdr_format)
             .layout(&fractal_layout)
             .add_constant("fractal_type", 0.0)
             .build();
 
         let sierpinski = gfx
-            .post_processing_pipeline(&fractal_shader, gfx.hdr_format)
+            .post_processing_pipeline(&fractal_shader)
             .name("sierpinski")
+            .color_format(gfx.hdr_format)
             .layout(&fractal_layout)
             .add_constant("fractal_type", 1.0)
             .build();
@@ -209,18 +319,24 @@ impl RenderStack {
 
             camera,
             camera_buffer,
-
             global_buffer,
-
             frame_bind_group,
+
+            bloom_buffer,
+            bloom_bind_group,
+
+            bloom_downsample_first,
+            bloom_downsample_main,
+            bloom_upsample_main,
+            bloom_upsample_last,
 
             hdr_color,
             hdr_color_view,
             hdr_sampler,
+            hdr_bind_group_layout,
+            hdr_bind_group,
 
             composite,
-            composite_hdr_bind_group_layout,
-            composite_hdr_bind_group,
 
             fractal: [mandlebulb, sierpinski],
 
@@ -239,9 +355,9 @@ impl RenderStack {
 
         self.hdr_color = create_hdr_color(gfx, physical_size[0], physical_size[1]);
         self.hdr_color_view = create_hdr_color_view(&self.hdr_color);
-        self.composite_hdr_bind_group = create_hdr_bind_group(
+        self.hdr_bind_group = create_hdr_bind_group(
             gfx,
-            &self.composite_hdr_bind_group_layout,
+            &self.hdr_bind_group_layout,
             &self.hdr_color_view,
             &self.hdr_sampler,
         );
@@ -352,11 +468,21 @@ impl RenderStack {
 
     pub fn draw_composite(&self, render_pass: &mut RenderPass<'static>) {
         render_pass.set_pipeline(&self.composite);
-        render_pass.set_bind_group(0, &self.composite_hdr_bind_group, &[]);
+        render_pass.set_bind_group(0, &self.hdr_bind_group, &[]);
         render_pass.set_bind_group(1, &self.frame_bind_group, &[]);
         render_pass.draw(0..3, 0..1);
     }
 }
+
+pub struct BloomTextures {
+    texture: wgpu::Texture,
+    views: Vec<wgpu::TextureView>, // One view for each mip level
+
+    bind_group_layout: wgpu::BindGroupLayout,
+    bind_groups: Vec<wgpu::BindGroup>,
+}
+
+impl BloomTextures {}
 
 fn create_hdr_color(gfx: &Graphics, width: u32, height: u32) -> wgpu::Texture {
     let texture = gfx.device.create_texture(&wgpu::TextureDescriptor {
