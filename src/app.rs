@@ -6,7 +6,9 @@ use egui::epaint::ViewportInPixels;
 use glam::Vec3;
 use hecs::World;
 
-use crate::components::{Camera, Global, PanOrbitController, Pipeline, update_pan_orbit_camera};
+use crate::components::{
+    BloomCompositeMode, Camera, Global, PanOrbitController, Pipeline, update_pan_orbit_camera,
+};
 use crate::math::{Projection, Transform};
 use crate::renderer::{DrawCameraCallback, UiCallback};
 
@@ -222,15 +224,63 @@ impl App {
 
                     ui.label("Tonemapping");
                     ui.add(
-                        egui::Slider::new(&mut global.pre_saturation, 0.0..=10.0)
+                        egui::Slider::new(&mut global.tonemap.pre_saturation, 0.0..=10.0)
                             .text("Pre-Saturation"),
                     );
                     ui.add(
-                        egui::Slider::new(&mut global.post_saturation, 0.0..=10.0)
+                        egui::Slider::new(&mut global.tonemap.post_saturation, 0.0..=10.0)
                             .text("Post-Saturation"),
                     );
-                    ui.add(egui::Slider::new(&mut global.gamma, 0.0..=10.0).text("Gamma"));
-                    ui.add(egui::Slider::new(&mut global.exposure, 0.0..=10.0).text("Exposure"));
+                    ui.add(egui::Slider::new(&mut global.tonemap.gamma, 0.0..=10.0).text("Gamma"));
+                    ui.add(
+                        egui::Slider::new(&mut global.tonemap.exposure, 0.0..=10.0)
+                            .text("Exposure"),
+                    );
+
+                    ui.label("Bloom");
+                    ui.add(
+                        egui::Slider::new(&mut global.bloom.intensity, 0.0..=5.0).text("Intensity"),
+                    );
+                    ui.add(
+                        egui::Slider::new(&mut global.bloom.low_frequency_boost, 0.0..=5.0)
+                            .text("Low Frequency Boost"),
+                    );
+                    ui.add(
+                        egui::Slider::new(
+                            &mut global.bloom.low_frequency_boost_curvature,
+                            0.0..=5.0,
+                        )
+                        .text("Low Frequency Boost Curvature"),
+                    );
+                    ui.add(
+                        egui::Slider::new(&mut global.bloom.high_pass_frequency, 0.0..=5.0)
+                            .text("High Pass Frequency"),
+                    );
+                    egui::ComboBox::from_label("Composite Mode")
+                        .selected_text(format!("{:?}", global.bloom.composite_mode))
+                        .show_ui(ui, |ui| {
+                            ui.selectable_value(
+                                &mut global.bloom.composite_mode,
+                                BloomCompositeMode::Additive,
+                                "Additive",
+                            );
+                            ui.selectable_value(
+                                &mut global.bloom.composite_mode,
+                                BloomCompositeMode::EnergyConserving,
+                                "EnergyConserving",
+                            );
+                        });
+                    ui.add(
+                        egui::Slider::new(&mut global.bloom.prefilter.threshold, 0.0..=5.0)
+                            .text("Threshold"),
+                    );
+                    ui.add(
+                        egui::Slider::new(
+                            &mut global.bloom.prefilter.threshold_softness,
+                            0.0..=5.0,
+                        )
+                        .text("Threshold Softness"),
+                    );
                 });
         }
     }

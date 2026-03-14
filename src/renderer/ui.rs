@@ -70,7 +70,7 @@ pub struct UiRenderer {
     previous_uniform_buffer_content: UniformBuffer,
 
     textures: HashMap<epaint::TextureId, Texture>,
-    next_user_texture_id: u64,
+    _next_user_texture_id: u64,
     samplers: HashMap<epaint::textures::TextureOptions, wgpu::Sampler>,
 
     /// Storage for resources shared with all invocations of [`CallbackTrait`]'s methods.
@@ -252,7 +252,7 @@ impl UiRenderer {
             uniform_bind_group,
             texture_bind_group_layout,
             textures: HashMap::default(),
-            next_user_texture_id: 0,
+            _next_user_texture_id: 0,
             samplers: HashMap::default(),
             callback_resources: UiCallbackResources::default(),
         }
@@ -524,17 +524,17 @@ impl UiRenderer {
     /// This enables the application to reference the texture inside an image ui element.
     /// This effectively enables off-screen rendering inside the egui UI. Texture must have
     /// the texture format [`wgpu::TextureFormat::Rgba8Unorm`].
-    pub fn register_native_texture(
+    pub fn _register_native_texture(
         &mut self,
         device: &wgpu::Device,
         texture: &wgpu::TextureView,
         texture_filter: wgpu::FilterMode,
     ) -> epaint::TextureId {
-        self.register_native_texture_with_sampler_options(
+        self._register_native_texture_with_sampler_options(
             device,
             texture,
             wgpu::SamplerDescriptor {
-                label: Some(format!("egui_user_image_{}", self.next_user_texture_id).as_str()),
+                label: Some(format!("egui_user_image_{}", self._next_user_texture_id).as_str()),
                 mag_filter: texture_filter,
                 min_filter: texture_filter,
                 ..Default::default()
@@ -545,18 +545,18 @@ impl UiRenderer {
     /// Registers a [`wgpu::Texture`] with an existing [`epaint::TextureId`].
     ///
     /// This enables applications to reuse [`epaint::TextureId`]s.
-    pub fn update_ui_texture_from_wgpu_texture(
+    pub fn _update_ui_texture_from_wgpu_texture(
         &mut self,
         device: &wgpu::Device,
         texture: &wgpu::TextureView,
         texture_filter: wgpu::FilterMode,
         id: epaint::TextureId,
     ) {
-        self.update_ui_texture_from_wgpu_texture_with_sampler_options(
+        self._update_ui_texture_from_wgpu_texture_with_sampler_options(
             device,
             texture,
             wgpu::SamplerDescriptor {
-                label: Some(format!("egui_user_image_{}", self.next_user_texture_id).as_str()),
+                label: Some(format!("egui_user_image_{}", self._next_user_texture_id).as_str()),
                 mag_filter: texture_filter,
                 min_filter: texture_filter,
                 ..Default::default()
@@ -574,7 +574,7 @@ impl UiRenderer {
     /// The texture must have the format [`wgpu::TextureFormat::Rgba8Unorm`].
     /// Any compare function supplied in the [`wgpu::SamplerDescriptor`] will be ignored.
     #[expect(clippy::needless_pass_by_value)] // false positive
-    pub fn register_native_texture_with_sampler_options(
+    pub fn _register_native_texture_with_sampler_options(
         &mut self,
         device: &wgpu::Device,
         texture: &wgpu::TextureView,
@@ -586,7 +586,7 @@ impl UiRenderer {
         });
 
         let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some(format!("egui_user_image_{}", self.next_user_texture_id).as_str()),
+            label: Some(format!("egui_user_image_{}", self._next_user_texture_id).as_str()),
             layout: &self.texture_bind_group_layout,
             entries: &[
                 wgpu::BindGroupEntry {
@@ -600,7 +600,7 @@ impl UiRenderer {
             ],
         });
 
-        let id = epaint::TextureId::User(self.next_user_texture_id);
+        let id = epaint::TextureId::User(self._next_user_texture_id);
         self.textures.insert(
             id,
             Texture {
@@ -609,7 +609,7 @@ impl UiRenderer {
                 options: None,
             },
         );
-        self.next_user_texture_id += 1;
+        self._next_user_texture_id += 1;
 
         id
     }
@@ -619,7 +619,7 @@ impl UiRenderer {
     ///
     /// This allows applications to reuse [`epaint::TextureId`]s created with custom sampler options.
     #[expect(clippy::needless_pass_by_value)] // false positive
-    pub fn update_ui_texture_from_wgpu_texture_with_sampler_options(
+    pub fn _update_ui_texture_from_wgpu_texture_with_sampler_options(
         &mut self,
         device: &wgpu::Device,
         texture: &wgpu::TextureView,
@@ -640,7 +640,7 @@ impl UiRenderer {
         });
 
         let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some(format!("egui_user_image_{}", self.next_user_texture_id).as_str()),
+            label: Some(format!("egui_user_image_{}", self._next_user_texture_id).as_str()),
             layout: &self.texture_bind_group_layout,
             entries: &[
                 wgpu::BindGroupEntry {
@@ -664,7 +664,7 @@ impl UiRenderer {
     pub fn update_buffers(
         &mut self,
         gfx: &Graphics,
-        encoder: &mut wgpu::CommandEncoder,
+        _encoder: &mut wgpu::CommandEncoder,
         paint_jobs: &[epaint::ClippedPrimitive],
         screen: &UiScreen,
     ) {

@@ -9,10 +9,14 @@ use wgpu::{
 
 use super::Graphics;
 use crate::{
-    components::{Camera, Global},
+    components::{BloomCompositeMode, BloomSettings, Camera, Global},
     math::Transform,
 };
 use glam::{Mat4, Vec2, Vec4};
+
+mod bloom;
+
+use bloom::{BloomTexture, BloomUniformBuffer};
 
 #[derive(Debug, Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
 #[repr(C)]
@@ -38,7 +42,7 @@ pub struct GlobalUniform {
 #[repr(C)]
 pub struct BloomUniform {
     threshold_precomputations: Vec4,
-    viewport: Vec4,
+    // viewport: Vec4,
     scale: Vec2,
     aspect: f32,
     _unused: f32,
@@ -54,9 +58,6 @@ pub struct RenderStack {
     // Global Params Data
     global_buffer: wgpu::Buffer,
     frame_bind_group: wgpu::BindGroup,
-    // Bloom data
-    bloom_buffer: wgpu::Buffer,
-    bloom_bind_group: wgpu::BindGroup,
 
     // HDR color texture (primary render target)
     hdr_color: wgpu::Texture,
@@ -71,8 +72,13 @@ pub struct RenderStack {
     // Bloom Pipelines
     bloom_downsample_first: wgpu::RenderPipeline,
     bloom_downsample_main: wgpu::RenderPipeline,
-    bloom_upsample_main: wgpu::RenderPipeline,
-    bloom_upsample_last: wgpu::RenderPipeline,
+    bloom_upsample_main_additive: wgpu::RenderPipeline,
+    bloom_upsample_last_additive: wgpu::RenderPipeline,
+    bloom_upsample_main_conserving: wgpu::RenderPipeline,
+    bloom_upsample_last_conserving: wgpu::RenderPipeline,
+
+    bloom_texture: BloomTexture,
+    bloom_buffer: BloomUniformBuffer,
 
     // Composite Pipeline
     composite: wgpu::RenderPipeline,
@@ -147,42 +153,6 @@ impl RenderStack {
             ],
         });
 
-        let bloom_buffer = gfx.device.create_buffer(&BufferDescriptor {
-            label: Some("bloom_buffer"),
-            size: size_of::<BloomUniform>() as u64,
-            usage: BufferUsages::UNIFORM | BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-
-        let bloom_bind_group_layout =
-            gfx.device
-                .create_bind_group_layout(&BindGroupLayoutDescriptor {
-                    label: Some("bloom_bind_group_layout"),
-                    entries: &[BindGroupLayoutEntry {
-                        binding: 0,
-                        visibility: ShaderStages::VERTEX | ShaderStages::FRAGMENT,
-                        ty: BindingType::Buffer {
-                            ty: BufferBindingType::Uniform,
-                            has_dynamic_offset: false,
-                            min_binding_size: None,
-                        },
-                        count: None,
-                    }],
-                });
-
-        let bloom_bind_group = gfx.device.create_bind_group(&BindGroupDescriptor {
-            label: Some("bloom_bind_group"),
-            layout: &bloom_bind_group_layout,
-            entries: &[BindGroupEntry {
-                binding: 0,
-                resource: BindingResource::Buffer(BufferBinding {
-                    buffer: &bloom_buffer,
-                    offset: 0,
-                    size: None,
-                }),
-            }],
-        });
-
         let hdr_color = create_hdr_color(gfx, physical_size[0], physical_size[1]);
         let hdr_color_view = create_hdr_color_view(&hdr_color);
         let hdr_sampler = create_hdr_sampler(gfx);
@@ -217,9 +187,19 @@ impl RenderStack {
         // *******************************
         // Bloom Pipelines
 
+        let bloom_settings = BloomSettings::NATURAL;
+
+        let bloom_texture = BloomTexture::new(gfx, &bloom_settings, physical_size);
+        let bloom_buffer = BloomUniformBuffer::new(gfx);
+
         let bloom_shader = gfx.create_shader_module("bloom", include_wesl!("bloom"));
-        let bloom_layout =
-            gfx.create_pipeline_layout(0, &[&hdr_bind_group_layout, &bloom_bind_group_layout]);
+        let bloom_layout = gfx.create_pipeline_layout(
+            0,
+            &[
+                bloom_texture.bind_group_layout(),
+                bloom_buffer.bind_group_layout(),
+            ],
+        );
 
         let bloom_downsample_first = gfx
             .post_processing_pipeline(&bloom_shader)
@@ -238,9 +218,15 @@ impl RenderStack {
             .entry_point("downsample")
             .build();
 
-        let color_blend = wgpu::BlendComponent {
+        let color_blend_additive = wgpu::BlendComponent {
             src_factor: wgpu::BlendFactor::Constant,
             dst_factor: wgpu::BlendFactor::One,
+            operation: wgpu::BlendOperation::Add,
+        };
+
+        let color_blend_conserving = wgpu::BlendComponent {
+            src_factor: wgpu::BlendFactor::Constant,
+            dst_factor: wgpu::BlendFactor::OneMinusConstant,
             operation: wgpu::BlendOperation::Add,
         };
 
@@ -250,24 +236,48 @@ impl RenderStack {
             operation: wgpu::BlendOperation::Add,
         };
 
-        let bloom_upsample_main = gfx
+        let bloom_upsample_main_additive = gfx
             .post_processing_pipeline(&bloom_shader)
             .name("bloom_upsample_main")
             .color_format(gfx.bloom_format)
             .color_blend_state(wgpu::BlendState {
-                color: color_blend,
+                color: color_blend_additive,
                 alpha: alpha_blend,
             })
             .layout(&bloom_layout)
             .entry_point("upsample")
             .build();
 
-        let bloom_upsample_last = gfx
+        let bloom_upsample_last_additive = gfx
             .post_processing_pipeline(&bloom_shader)
             .name("bloom_upsample_last")
             .color_format(gfx.hdr_format)
             .color_blend_state(wgpu::BlendState {
-                color: color_blend,
+                color: color_blend_additive,
+                alpha: alpha_blend,
+            })
+            .layout(&bloom_layout)
+            .entry_point("upsample")
+            .build();
+
+        let bloom_upsample_main_conserving = gfx
+            .post_processing_pipeline(&bloom_shader)
+            .name("bloom_upsample_main")
+            .color_format(gfx.bloom_format)
+            .color_blend_state(wgpu::BlendState {
+                color: color_blend_conserving,
+                alpha: alpha_blend,
+            })
+            .layout(&bloom_layout)
+            .entry_point("upsample")
+            .build();
+
+        let bloom_upsample_last_conserving = gfx
+            .post_processing_pipeline(&bloom_shader)
+            .name("bloom_upsample_last")
+            .color_format(gfx.hdr_format)
+            .color_blend_state(wgpu::BlendState {
+                color: color_blend_conserving,
                 alpha: alpha_blend,
             })
             .layout(&bloom_layout)
@@ -322,13 +332,14 @@ impl RenderStack {
             global_buffer,
             frame_bind_group,
 
+            bloom_texture,
             bloom_buffer,
-            bloom_bind_group,
-
             bloom_downsample_first,
             bloom_downsample_main,
-            bloom_upsample_main,
-            bloom_upsample_last,
+            bloom_upsample_main_additive,
+            bloom_upsample_last_additive,
+            bloom_upsample_main_conserving,
+            bloom_upsample_last_conserving,
 
             hdr_color,
             hdr_color_view,
@@ -345,6 +356,10 @@ impl RenderStack {
     }
 
     pub fn resize(&mut self, gfx: &Graphics, physical_size: [u32; 2]) {
+        if self.physical_size == physical_size {
+            return;
+        }
+
         self.physical_size = physical_size;
 
         log::info!(
@@ -365,7 +380,7 @@ impl RenderStack {
 
     pub fn prepare(
         &mut self,
-        _gfx: &Graphics,
+        gfx: &Graphics,
         world: &mut hecs::World,
         encoder: &mut wgpu::CommandEncoder,
     ) {
@@ -395,11 +410,12 @@ impl RenderStack {
 
         // Global
         {
+            let global_default = Global::default();
             let global = world
                 .query_mut::<&Global>()
                 .into_iter()
                 .next()
-                .unwrap_or(&Global::DEFAULT);
+                .unwrap_or(&global_default);
 
             let time = global.time.as_secs_f32();
 
@@ -411,11 +427,18 @@ impl RenderStack {
             );
             uniform.copy_from_slice(bytemuck::cast_slice(&[GlobalUniform {
                 time,
-                pre_saturation: global.pre_saturation,
-                post_saturation: global.post_saturation,
-                gamma: global.gamma,
-                exposure: global.exposure,
+                pre_saturation: global.tonemap.pre_saturation,
+                post_saturation: global.tonemap.post_saturation,
+                gamma: global.tonemap.gamma,
+                exposure: global.tonemap.exposure,
             }]));
+
+            // Bloom
+            let bloom = &global.bloom;
+
+            self.bloom_texture.prepare(gfx, bloom, self.physical_size);
+            self.bloom_buffer
+                .prepare(bloom, encoder, &mut self.staging_belt);
         }
 
         self.staging_belt.finish();
@@ -427,11 +450,14 @@ impl RenderStack {
         world: &mut hecs::World,
         encoder: &mut wgpu::CommandEncoder,
     ) {
+        let global_default = Global::default();
         let global = world
             .query_mut::<&Global>()
             .into_iter()
             .next()
-            .unwrap_or(&Global::DEFAULT);
+            .unwrap_or(&global_default);
+
+        let bloom = &global.bloom;
 
         let fractal_index = match global.pipeline {
             crate::components::Pipeline::Mandlebulb => 0,
@@ -460,6 +486,138 @@ impl RenderStack {
         render_pass.set_bind_group(0, &self.frame_bind_group, &[]);
         render_pass.draw(0..3, 0..1);
         drop(render_pass);
+
+        // Bloom render passes
+        if bloom.intensity != 0.0 {
+            // First downsample pass
+            {
+                let mut downsampling_first_pass =
+                    encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                        label: Some("bloom_downsampling_first_pass"),
+                        color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                            view: self.bloom_texture.view(0),
+                            depth_slice: None,
+                            resolve_target: None,
+                            ops: wgpu::Operations::default(),
+                        })],
+                        depth_stencil_attachment: None,
+                        timestamp_writes: None,
+                        occlusion_query_set: None,
+                        multiview_mask: None,
+                    });
+                downsampling_first_pass.set_pipeline(&self.bloom_downsample_first);
+                downsampling_first_pass.set_bind_group(0, &self.hdr_bind_group, &[]);
+                downsampling_first_pass.set_bind_group(1, self.bloom_buffer.bind_group(), &[]);
+                downsampling_first_pass.draw(0..3, 0..1);
+            }
+
+            // Other downsample passes
+            for mip in 1..self.bloom_texture.mip_level_count() {
+                let mut downsampling_pass =
+                    encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                        label: Some("bloom_downsampling_pass"),
+                        color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                            view: self.bloom_texture.view(mip),
+                            depth_slice: None,
+                            resolve_target: None,
+                            ops: wgpu::Operations::default(),
+                        })],
+                        depth_stencil_attachment: None,
+                        timestamp_writes: None,
+                        occlusion_query_set: None,
+                        multiview_mask: None,
+                    });
+                downsampling_pass.set_pipeline(&self.bloom_downsample_main);
+                downsampling_pass.set_bind_group(0, self.bloom_texture.bind_group(mip - 1), &[]);
+                downsampling_pass.set_bind_group(1, self.bloom_buffer.bind_group(), &[]);
+                downsampling_pass.draw(0..3, 0..1);
+            }
+
+            // Upsample passes
+            for mip in (1..self.bloom_texture.mip_level_count()).rev() {
+                let mut upsampling_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                    label: Some("bloom_upsampling_pass"),
+                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                        view: self.bloom_texture.view(mip - 1),
+                        depth_slice: None,
+                        resolve_target: None,
+                        ops: wgpu::Operations {
+                            load: wgpu::LoadOp::Load,
+                            store: wgpu::StoreOp::Store,
+                        },
+                    })],
+                    depth_stencil_attachment: None,
+                    timestamp_writes: None,
+                    occlusion_query_set: None,
+                    multiview_mask: None,
+                });
+                match bloom.composite_mode {
+                    BloomCompositeMode::EnergyConserving => {
+                        upsampling_pass.set_pipeline(&self.bloom_upsample_main_conserving)
+                    }
+                    BloomCompositeMode::Additive => {
+                        upsampling_pass.set_pipeline(&self.bloom_upsample_main_additive)
+                    }
+                }
+                upsampling_pass.set_bind_group(0, self.bloom_texture.bind_group(mip), &[]);
+                upsampling_pass.set_bind_group(1, self.bloom_buffer.bind_group(), &[]);
+                let blend = compute_blend_factor(
+                    bloom,
+                    mip as f32,
+                    (self.bloom_texture.mip_level_count() - 1) as f32,
+                ) as f64;
+                upsampling_pass.set_blend_constant(wgpu::Color {
+                    r: blend,
+                    g: blend,
+                    b: blend,
+                    a: 1.0,
+                });
+                upsampling_pass.draw(0..3, 0..1);
+            }
+
+            // Last upsample pass
+            {
+                let mut upsampling_last_pass =
+                    encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                        label: Some("bloom_upsampling_final_pass"),
+                        color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                            view: &self.hdr_color_view,
+                            depth_slice: None,
+                            resolve_target: None,
+                            ops: wgpu::Operations {
+                                load: wgpu::LoadOp::Load,
+                                store: wgpu::StoreOp::Store,
+                            },
+                        })],
+                        depth_stencil_attachment: None,
+                        timestamp_writes: None,
+                        occlusion_query_set: None,
+                        multiview_mask: None,
+                    });
+                match bloom.composite_mode {
+                    BloomCompositeMode::EnergyConserving => {
+                        upsampling_last_pass.set_pipeline(&self.bloom_upsample_last_conserving)
+                    }
+                    BloomCompositeMode::Additive => {
+                        upsampling_last_pass.set_pipeline(&self.bloom_upsample_last_additive)
+                    }
+                }
+                upsampling_last_pass.set_bind_group(0, self.bloom_texture.bind_group(0), &[]);
+                upsampling_last_pass.set_bind_group(1, self.bloom_buffer.bind_group(), &[]);
+                let blend = compute_blend_factor(
+                    bloom,
+                    0.0,
+                    (self.bloom_texture.mip_level_count() - 1) as f32,
+                ) as f64;
+                upsampling_last_pass.set_blend_constant(wgpu::Color {
+                    r: blend,
+                    g: blend,
+                    b: blend,
+                    a: 1.0,
+                });
+                upsampling_last_pass.draw(0..3, 0..1);
+            }
+        }
     }
 
     pub fn recall(&mut self, _gfx: &Graphics, _world: &mut hecs::World) {
@@ -473,16 +631,6 @@ impl RenderStack {
         render_pass.draw(0..3, 0..1);
     }
 }
-
-pub struct BloomTextures {
-    texture: wgpu::Texture,
-    views: Vec<wgpu::TextureView>, // One view for each mip level
-
-    bind_group_layout: wgpu::BindGroupLayout,
-    bind_groups: Vec<wgpu::BindGroup>,
-}
-
-impl BloomTextures {}
 
 fn create_hdr_color(gfx: &Graphics, width: u32, height: u32) -> wgpu::Texture {
     let texture = gfx.device.create_texture(&wgpu::TextureDescriptor {
@@ -500,6 +648,39 @@ fn create_hdr_color(gfx: &Graphics, width: u32, height: u32) -> wgpu::Texture {
         view_formats: &[],
     });
     texture
+}
+
+/// Calculates blend intensities of blur pyramid levels
+/// during the upsampling + compositing stage.
+///
+/// The function assumes all pyramid levels are upsampled and
+/// blended into higher frequency ones using this function to
+/// calculate blend levels every time. The final (highest frequency)
+/// pyramid level in not blended into anything therefore this function
+/// is not applied to it. As a result, the *mip* parameter of 0 indicates
+/// the second-highest frequency pyramid level (in our case that is the
+/// 0th mip of the bloom texture with the original image being the
+/// actual highest frequency level).
+///
+/// Parameters:
+/// * `mip` - the index of the lower frequency pyramid level (0 - `max_mip`, where 0 indicates highest frequency mip but not the highest frequency image).
+/// * `max_mip` - the index of the lowest frequency pyramid level.
+///
+/// This function can be visually previewed for all values of *mip* (normalized) with tweakable
+/// [`Bloom`] parameters on [Desmos graphing calculator](https://www.desmos.com/calculator/ncc8xbhzzl).
+fn compute_blend_factor(bloom: &BloomSettings, mip: f32, max_mip: f32) -> f32 {
+    let mut lf_boost = (1.0
+        - (1.0 - (mip / max_mip)).powf(1.0 / (1.0 - bloom.low_frequency_boost_curvature)))
+        * bloom.low_frequency_boost;
+    let high_pass_lq = 1.0
+        - (((mip / max_mip) - bloom.high_pass_frequency) / bloom.high_pass_frequency)
+            .clamp(0.0, 1.0);
+    lf_boost *= match bloom.composite_mode {
+        BloomCompositeMode::EnergyConserving => 1.0 - bloom.intensity,
+        BloomCompositeMode::Additive => 1.0,
+    };
+
+    (bloom.intensity + lf_boost) * high_pass_lq
 }
 
 fn create_hdr_color_view(texture: &wgpu::Texture) -> TextureView {

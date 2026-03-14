@@ -10,7 +10,7 @@ var hdr_sampler: sampler;
 
 struct BloomUniform {
     threshold_precomputations: vec4<f32>,
-    viewport: vec4<f32>,
+    // viewport: vec4<f32>,
     scale: vec2<f32>,
     aspect: f32,
     _unused: f32,
@@ -44,31 +44,30 @@ fn karis_average(color: vec3<f32>) -> f32 {
     return 1.0 / (1.0 + luma);
 }
 
-
 // [COD] slide 153
 fn sample_input_13_tap(uv: vec2<f32>) -> vec3<f32> {
 
-//     // This is the fast path. When the bloom scale is uniform, the 13 tap sampling kernel can be
-//     // expressed with constant offsets.
-//     //
-//     // It's possible that this isn't meaningfully faster than the "slow" path. However, because it
-//     // is hard to test performance on all platforms, and uniform bloom is the most common case, this
-//     // path was retained when adding non-uniform (anamorphic) bloom. This adds a small, but nonzero,
-//     // cost to maintainability, but it does help me sleep at night.
-//     let a = textureSample(input_texture, s, uv, vec2<i32>(-2, 2)).rgb;
-//     let b = textureSample(input_texture, s, uv, vec2<i32>(0, 2)).rgb;
-//     let c = textureSample(input_texture, s, uv, vec2<i32>(2, 2)).rgb;
-//     let d = textureSample(input_texture, s, uv, vec2<i32>(-2, 0)).rgb;
-//     let e = textureSample(input_texture, s, uv).rgb;
-//     let f = textureSample(input_texture, s, uv, vec2<i32>(2, 0)).rgb;
-//     let g = textureSample(input_texture, s, uv, vec2<i32>(-2, -2)).rgb;
-//     let h = textureSample(input_texture, s, uv, vec2<i32>(0, -2)).rgb;
-//     let i = textureSample(input_texture, s, uv, vec2<i32>(2, -2)).rgb;
-//     let j = textureSample(input_texture, s, uv, vec2<i32>(-1, 1)).rgb;
-//     let k = textureSample(input_texture, s, uv, vec2<i32>(1, 1)).rgb;
-//     let l = textureSample(input_texture, s, uv, vec2<i32>(-1, -1)).rgb;
-//     let m = textureSample(input_texture, s, uv, vec2<i32>(1, -1)).rgb;
-// #else
+    //     // This is the fast path. When the bloom scale is uniform, the 13 tap sampling kernel can be
+    //     // expressed with constant offsets.
+    //     //
+    //     // It's possible that this isn't meaningfully faster than the "slow" path. However, because it
+    //     // is hard to test performance on all platforms, and uniform bloom is the most common case, this
+    //     // path was retained when adding non-uniform (anamorphic) bloom. This adds a small, but nonzero,
+    //     // cost to maintainability, but it does help me sleep at night.
+    //     let a = textureSample(input_texture, s, uv, vec2<i32>(-2, 2)).rgb;
+    //     let b = textureSample(input_texture, s, uv, vec2<i32>(0, 2)).rgb;
+    //     let c = textureSample(input_texture, s, uv, vec2<i32>(2, 2)).rgb;
+    //     let d = textureSample(input_texture, s, uv, vec2<i32>(-2, 0)).rgb;
+    //     let e = textureSample(input_texture, s, uv).rgb;
+    //     let f = textureSample(input_texture, s, uv, vec2<i32>(2, 0)).rgb;
+    //     let g = textureSample(input_texture, s, uv, vec2<i32>(-2, -2)).rgb;
+    //     let h = textureSample(input_texture, s, uv, vec2<i32>(0, -2)).rgb;
+    //     let i = textureSample(input_texture, s, uv, vec2<i32>(2, -2)).rgb;
+    //     let j = textureSample(input_texture, s, uv, vec2<i32>(-1, 1)).rgb;
+    //     let k = textureSample(input_texture, s, uv, vec2<i32>(1, 1)).rgb;
+    //     let l = textureSample(input_texture, s, uv, vec2<i32>(-1, -1)).rgb;
+    //     let m = textureSample(input_texture, s, uv, vec2<i32>(1, -1)).rgb;
+    // #else
     // This is the flexible, but potentially slower, path for non-uniform sampling. Because the
     // sample is not a constant, and it can fall outside of the limits imposed on constant sample
     // offsets (-8..8), we have to compute the pixel offset in uv coordinates using the size of the
@@ -155,8 +154,8 @@ fn sample_input_3x3_tent(uv: vec2<f32>) -> vec3<f32> {
 @fragment
 fn downsample(@location(0) uv: vec2f) -> @location(0) vec4f {
     if first_downsample {
-        let sample_uv = global.viewport.xy + uv * global.viewport.zw;
-        var sample = sample_input_13_tap(sample_uv);
+        // let sample_uv = global.viewport.xy + uv * global.viewport.zw;
+        var sample = sample_input_13_tap(uv);
         // Lower bound of 0.0001 is to avoid propagating multiplying by 0.0 through the
         // downscaling and upscaling which would result in black boxes.
         // The upper bound is to prevent NaNs.
