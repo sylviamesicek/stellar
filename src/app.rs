@@ -12,9 +12,11 @@ use crate::components::{
 use crate::math::{Projection, Transform};
 use crate::renderer::{DrawCameraCallback, UiCallback};
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 enum Simulation {
     Fractal,
+    #[default]
+    Standard,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -98,6 +100,7 @@ impl App {
             egui::containers::menu::MenuBar::new().ui(ui, |ui| {
                 ui.menu_button("Simulation", |ui| {
                     ui.selectable_value(&mut self.simulation, Simulation::Fractal, "Fractal");
+                    ui.selectable_value(&mut self.simulation, Simulation::Standard, "Standard");
                 });
                 ui.menu_button("Graphics", |ui| {
                     if ui.button("Post-Processing").clicked() {
@@ -166,6 +169,29 @@ impl App {
                 // ));
 
                 // drop(controller);
+            } else if self.simulation == Simulation::Standard {
+                let mut global = world.get::<&mut Global>(self.global).unwrap();
+                global.pipeline = Pipeline::Standard;
+
+                ui.heading("Standard");
+
+                ui.heading("Camera");
+
+                let mut transform = world.get::<&mut Transform>(self.camera).unwrap();
+                ui.add(egui::Slider::new(&mut transform.translation[0], -5.0..=5.0));
+                ui.add(egui::Slider::new(&mut transform.translation[1], -5.0..=5.0));
+                ui.add(egui::Slider::new(&mut transform.translation[2], 0.0..=10.0));
+
+                let mut camera = world.get::<&mut Camera>(self.camera).unwrap();
+
+                match &mut camera.projection {
+                    Projection::Perspective(perspective_projection) => {
+                        let mut fov_degree = perspective_projection.fov.to_degrees();
+                        ui.add(egui::Slider::new(&mut fov_degree, 15.0..=150.0).text("FoV"));
+                        perspective_projection.fov = fov_degree.to_radians();
+                    }
+                    Projection::Orthographic(_) => {}
+                }
             }
         });
 

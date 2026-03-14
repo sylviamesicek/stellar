@@ -43,10 +43,11 @@ impl Camera {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Copy, PartialEq, Eq)]
 pub enum Pipeline {
     Mandlebulb,
     Sierpinski,
+    Standard,
 }
 
 #[derive(Clone, Debug)]

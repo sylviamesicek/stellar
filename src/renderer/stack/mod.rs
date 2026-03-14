@@ -9,7 +9,7 @@ use wgpu::{
 
 use super::Graphics;
 use crate::{
-    components::{BloomCompositeMode, BloomSettings, Camera, Global},
+    components::{BloomCompositeMode, BloomSettings, Camera, Global, Pipeline},
     math::Transform,
 };
 use glam::{Mat4, Vec2, Vec4};
@@ -40,6 +40,13 @@ pub struct GlobalUniform {
 
 #[derive(Debug, Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
 #[repr(C)]
+pub struct StarUniform {
+    origin: glam::Vec3,
+    radius: f32,
+}
+
+#[derive(Debug, Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
+#[repr(C)]
 pub struct BloomUniform {
     threshold_precomputations: Vec4,
     // viewport: Vec4,
@@ -59,6 +66,10 @@ pub struct RenderStack {
     global_buffer: wgpu::Buffer,
     frame_bind_group: wgpu::BindGroup,
 
+    // Star Upload data (temp)
+    star_buffer: wgpu::Buffer,
+    star_bind_group: wgpu::BindGroup,
+
     // HDR color texture (primary render target)
     hdr_color: wgpu::Texture,
     hdr_color_view: TextureView,
@@ -66,7 +77,9 @@ pub struct RenderStack {
     hdr_bind_group_layout: BindGroupLayout,
     hdr_bind_group: wgpu::BindGroup,
 
-    // Sierpinksi Pipeline
+    // Star Pipeline
+    star: wgpu::RenderPipeline,
+    // Fractal Pipelines
     fractal: [wgpu::RenderPipeline; 2],
 
     // Bloom Pipelines
@@ -151,6 +164,42 @@ impl RenderStack {
                     }),
                 },
             ],
+        });
+
+        let star_buffer = gfx.device.create_buffer(&BufferDescriptor {
+            label: Some("star_buffer"),
+            size: size_of::<StarUniform>() as u64,
+            usage: BufferUsages::UNIFORM | BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
+        let star_bind_group_layout =
+            gfx.device
+                .create_bind_group_layout(&BindGroupLayoutDescriptor {
+                    label: Some("star_bind_group_layout"),
+                    entries: &[BindGroupLayoutEntry {
+                        binding: 0,
+                        visibility: ShaderStages::VERTEX | ShaderStages::FRAGMENT,
+                        ty: BindingType::Buffer {
+                            ty: BufferBindingType::Uniform,
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    }],
+                });
+
+        let star_bind_group = gfx.device.create_bind_group(&BindGroupDescriptor {
+            label: Some("star_bind_group"),
+            layout: &star_bind_group_layout,
+            entries: &[BindGroupEntry {
+                binding: 0,
+                resource: BindingResource::Buffer(BufferBinding {
+                    buffer: &star_buffer,
+                    offset: 0,
+                    size: None,
+                }),
+            }],
         });
 
         let hdr_color = create_hdr_color(gfx, physical_size[0], physical_size[1]);
@@ -298,7 +347,21 @@ impl RenderStack {
             .build();
 
         // *****************************
-        // Sierpinski Pipeline
+        // Star Pipeline
+
+        let star_shader = gfx.create_shader_module("star", include_wesl!("star"));
+        let star_layout =
+            gfx.create_pipeline_layout(0, &[&frame_bind_group_layout, &star_bind_group_layout]);
+
+        let star = gfx
+            .post_processing_pipeline(&star_shader)
+            .name("sierpinski")
+            .color_format(gfx.hdr_format)
+            .layout(&star_layout)
+            .build();
+
+        // *****************************
+        // Fractal Pipelines
 
         let fractal_shader = gfx.create_shader_module("fractal", include_wesl!("fractal"));
         let fractal_layout = gfx.create_pipeline_layout(0, &[&frame_bind_group_layout]);
@@ -332,6 +395,9 @@ impl RenderStack {
             global_buffer,
             frame_bind_group,
 
+            star_buffer,
+            star_bind_group,
+
             bloom_texture,
             bloom_buffer,
             bloom_downsample_first,
@@ -349,6 +415,7 @@ impl RenderStack {
 
             composite,
 
+            star,
             fractal: [mandlebulb, sierpinski],
 
             staging_belt,
@@ -441,6 +508,20 @@ impl RenderStack {
                 .prepare(bloom, encoder, &mut self.staging_belt);
         }
 
+        // Star
+        {
+            let mut uniform = self.staging_belt.write_buffer(
+                encoder,
+                &self.star_buffer,
+                0,
+                (size_of::<StarUniform>() as u64).try_into().unwrap(),
+            );
+            uniform.copy_from_slice(bytemuck::cast_slice(&[StarUniform {
+                origin: glam::Vec3::ZERO,
+                radius: 1.0,
+            }]));
+        }
+
         self.staging_belt.finish();
     }
 
@@ -459,33 +540,60 @@ impl RenderStack {
 
         let bloom = &global.bloom;
 
-        let fractal_index = match global.pipeline {
-            crate::components::Pipeline::Mandlebulb => 0,
-            crate::components::Pipeline::Sierpinski => 1,
-        };
+        if matches!(global.pipeline, Pipeline::Mandlebulb | Pipeline::Sierpinski) {
+            let fractal_index = match global.pipeline {
+                Pipeline::Mandlebulb => 0,
+                Pipeline::Sierpinski => 1,
+                _ => 0,
+            };
 
-        let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                view: &self.hdr_color_view,
-                resolve_target: None,
-                ops: wgpu::Operations {
-                    load: wgpu::LoadOp::Clear(wgpu::Color {
-                        r: 1.0,
-                        g: 0.24,
-                        b: 0.0,
-                        a: 1.0,
-                    }),
-                    store: wgpu::StoreOp::Store,
-                },
-                depth_slice: None,
-            })],
-            depth_stencil_attachment: None,
-            ..Default::default()
-        });
-        render_pass.set_pipeline(&self.fractal[fractal_index]);
-        render_pass.set_bind_group(0, &self.frame_bind_group, &[]);
-        render_pass.draw(0..3, 0..1);
-        drop(render_pass);
+            let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &self.hdr_color_view,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(wgpu::Color {
+                            r: 1.0,
+                            g: 0.24,
+                            b: 0.0,
+                            a: 1.0,
+                        }),
+                        store: wgpu::StoreOp::Store,
+                    },
+                    depth_slice: None,
+                })],
+                depth_stencil_attachment: None,
+                ..Default::default()
+            });
+            render_pass.set_pipeline(&self.fractal[fractal_index]);
+            render_pass.set_bind_group(0, &self.frame_bind_group, &[]);
+            render_pass.draw(0..3, 0..1);
+            drop(render_pass);
+        } else {
+            let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &self.hdr_color_view,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(wgpu::Color {
+                            r: 1.0,
+                            g: 0.24,
+                            b: 0.0,
+                            a: 1.0,
+                        }),
+                        store: wgpu::StoreOp::Store,
+                    },
+                    depth_slice: None,
+                })],
+                depth_stencil_attachment: None,
+                ..Default::default()
+            });
+            render_pass.set_pipeline(&self.star);
+            render_pass.set_bind_group(0, &self.frame_bind_group, &[]);
+            render_pass.set_bind_group(1, &self.star_bind_group, &[]);
+            render_pass.draw(0..3, 0..1);
+            drop(render_pass);
+        }
 
         // Bloom render passes
         if bloom.intensity != 0.0 {
