@@ -8,6 +8,6 @@ This project uses the `wgpu` crate for rendering, `hecs` ecs for application man
     - Mandelbulb ![Mandelbulb](figures/mandelbulb.png)
     - Sierpinski's Tetrahedron ![Sierpinski3d](figures/sierpinski3d.png)
 - Post-processing pipeline
-    - Bloom
+    - Bloom 
     - ACES Tone-mapping
 
