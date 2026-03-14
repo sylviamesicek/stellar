@@ -53,7 +53,7 @@ fn sierpinski3(p: vec3f) -> f32 {
     let iterations = 15;
     let scale = 2.0;
     let offset = 3.0;
-    
+
     var n = 0;
 
     while n < iterations {
@@ -76,35 +76,35 @@ fn sierpinski3(p: vec3f) -> f32 {
 }
 
 fn mandelbulb(position: vec3f) -> f32 {
-  var z = position;
-  var dr = 1.0;
-  var r = 0.0;
-  var iterations = 0;
-  let power = 8.0 + (5.0 * map(sin(global.time * pi / 5.0 + pi), -1.0, 1.0, 0.0, 1.0));
+    var z = position;
+    var dr = 1.0;
+    var r = 0.0;
+    var iterations = 0;
+    let power = 8.0 + (5.0 * map(sin(global.time * pi / 5.0 + pi), -1.0, 1.0, 0.0, 1.0));
 
-  for (var i = 0; i < 10; i++) {
-    iterations = i;
-    r = length (z);
+    for (var i = 0; i < 10; i++) {
+        iterations = i;
+        r = length(z);
 
-    if (r > 2.0) {
-      break;
+        if r > 2.0 {
+            break;
+        }
+
+        // convert to polar coordinates
+        var theta = acos(z.z / r);
+        var phi = atan2(z.y, z.x);
+        dr = pow(r, power - 1.0) * power * dr + 1.0;
+
+        // scale and rotate the point
+        let zr = pow(r, power);
+        theta = theta * power;
+        phi = phi * power;
+
+        // convert back to cartesian coordinates
+        z = zr * vec3(sin(theta) * cos(phi), sin(phi) * sin(theta), cos(theta));
+        z += position;
     }
-
-    // convert to polar coordinates
-    var theta = acos(z.z / r);
-    var phi = atan2(z.y, z.x);
-    dr = pow(r, power - 1.0) * power * dr + 1.0;
-
-    // scale and rotate the point
-    let zr = pow (r, power);
-    theta = theta * power;
-    phi = phi * power;
-
-    // convert back to cartesian coordinates
-    z = zr * vec3 (sin (theta) * cos (phi), sin (phi) * sin (theta), cos (theta));
-    z += position;
-  }
-  return 0.5 * log (r) * r / dr;
+    return 0.5 * log(r) * r / dr;
 }
 
 fn distance_estimator(point: vec3f) -> f32 {
@@ -116,7 +116,7 @@ fn distance_estimator(point: vec3f) -> f32 {
         p = vec3(p.x, pyz);
         let pyx = rotate(0.25 * pi) * p.yx;
         p = vec3(pyx.yx, p.z);
-        return sierpinski3(p);  
+        return sierpinski3(p);
     } else if fractal_type == 0 {
         // Mandlebulb
         let pyz = rotate(-0.3 * pi) * p.yz;
@@ -183,9 +183,16 @@ fn ray_marcher(ro: vec3f, rd: vec3f) -> vec4f {
             // color = hsv2rgb(color);
             // color /= min_dist_to_scene;
             color = vec3(0.0);
+
+            // color = vec3(0.8 + length(min_dist_to_sceen_pos) / 0.5, 1.0, 0.8);
+            // color = hsv2rgb(color);
+            // color *= 1.0 / (min_dist_to_scene * min_dist_to_scene);
+            // color /= map(sin(global.time * 3.0), -1.0, 1.0, 3000.0, 50000.0);
         }
 
-        color /= iterations / 10.0;
+        color /= f32(steps) * 0.08;
+
+        // color /= iterations / 10.0;
         // color /= pow(distance(ro, min_dist_to_origin_pos), 2.0);
         // color *= 2000.0;
     } else if fractal_type == 0 {
