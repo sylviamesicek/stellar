@@ -7,6 +7,7 @@ This project uses the `wgpu` crate for rendering, `hecs` ecs for application man
 -  3d fractal raymarching
     - Mandelbulb ![Mandelbulb](figures/mandelbulb.png)
     - Sierpinski's Tetrahedron ![Sierpinski3d](figures/sierpinski3d.png)
+- Basic Star rendering ![Star](figures/star.png)
 - Post-processing pipeline
     - Bloom 
     - ACES Tone-mapping
