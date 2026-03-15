@@ -42,6 +42,13 @@ impl Transform {
         }
     }
 
+    pub const fn with_uniform_scale(self, scale: f32) -> Self {
+        Self {
+            scale: glam::Vec3::new(scale, scale, scale),
+            ..self
+        }
+    }
+
     pub fn to_matrix(&self) -> Mat4 {
         Mat4::from_scale_rotation_translation(self.scale, self.rotation, self.translation)
     }

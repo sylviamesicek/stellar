@@ -59,6 +59,10 @@ impl App {
     }
 
     pub fn start(&mut self, world: &mut World) {
+        let mut global = Global::default();
+        global.bloom.composite_mode = BloomCompositeMode::Additive;
+        self.global = world.spawn(hecs::EntityBuilder::new().add(global).build());
+
         self.camera = world.spawn(
             hecs::EntityBuilder::new()
                 .add(Transform::from_xyz(0.0, 0.0, 4.0).looking_at(Vec3::ZERO, Vec3::Y))
@@ -66,9 +70,10 @@ impl App {
                 .add(PanOrbitController::default())
                 .build(),
         );
-        self.global = world.spawn(hecs::EntityBuilder::new().add(Global::default()).build());
+
         self.star = world.spawn(
             hecs::EntityBuilder::new()
+                .add(Transform::from_xyz(0.0, 0.0, 0.0).with_uniform_scale(1.0))
                 .add(Star::sun().with_temperature(2700.0))
                 .build(),
         );
@@ -182,7 +187,17 @@ impl App {
                 global.pipeline = Pipeline::Standard;
 
                 let mut star = world.get::<&mut Star>(self.star).unwrap();
+                // let mut transform = world.get::<&mut Transform>(self.star).unwrap();
+
                 ui.heading("Star");
+                // ui.add(egui::Slider::new(&mut transform.translation[0], -5.0..=5.0).text("Star X"));
+                // ui.add(egui::Slider::new(&mut transform.translation[1], -5.0..=5.0).text("Star Y"));
+                // ui.add(egui::Slider::new(&mut transform.translation[2], -5.0..=5.0).text("Star Z"));
+
+                // let mut scale = transform.scale[0];
+                // ui.add(egui::Slider::new(&mut scale, 0.0..=10.0).text("Star Radius"));
+                // transform.scale = glam::Vec3::new(scale, scale, scale);
+
                 ui.add(
                     egui::Slider::new(&mut star.temperature, 800.0..=29200.0).text("Temperature"),
                 );

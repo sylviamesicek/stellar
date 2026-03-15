@@ -2,6 +2,7 @@ use image::imageops::sample_bilinear;
 
 use crate::{
     components::Star,
+    math::Transform,
     renderer::{
         Graphics,
         stack::{FrameData, hdr::HdrTextures},
@@ -86,12 +87,13 @@ impl StandardPipeline {
         encoder: &mut wgpu::CommandEncoder,
         staging_belt: &mut wgpu::util::StagingBelt,
     ) {
+        let transform_default = Transform::IDENTITY;
         let star_default = Star::sun();
-        let star = world
-            .query_mut::<&Star>()
+        let (transform, star) = world
+            .query_mut::<(&Transform, &Star)>()
             .into_iter()
             .next()
-            .unwrap_or(&star_default);
+            .unwrap_or((&transform_default, &star_default));
 
         let temp = star.temperature;
         let u = (temp - 800.0) / 29200.0;
@@ -109,8 +111,8 @@ impl StandardPipeline {
             (size_of::<StarUniform>() as u64).try_into().unwrap(),
         );
         uniform.copy_from_slice(bytemuck::cast_slice(&[StarUniform {
-            origin: glam::Vec3::ZERO,
-            radius: 1.0,
+            origin: transform.translation,
+            radius: transform.scale.max_element(),
             color,
             granule_frequency: star.granule_frequency,
             granule_persistence: star.granule_persistence,
