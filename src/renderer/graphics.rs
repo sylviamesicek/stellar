@@ -1,4 +1,4 @@
-use std::borrow::Cow;
+use std::{borrow::Cow, num::NonZero};
 
 use smallvec::SmallVec;
 use wesl::include_wesl;
@@ -174,7 +174,27 @@ impl Graphics {
             })
     }
 
-    pub fn post_processing_pipeline<'a>(
+    pub fn start_bind_group_layout<'a>(&'a self) -> BindGroupLayoutBuilder<'a> {
+        BindGroupLayoutBuilder {
+            gfx: self,
+            label: None,
+            entries: SmallVec::new(),
+        }
+    }
+
+    pub fn start_bind_group<'a>(
+        &'a self,
+        layout: &'a wgpu::BindGroupLayout,
+    ) -> BindGroupBuilder<'a> {
+        BindGroupBuilder {
+            gfx: self,
+            label: None,
+            entries: SmallVec::new(),
+            layout,
+        }
+    }
+
+    pub fn start_post_processing_pipeline<'a>(
         &'a self,
         shader: &'a wgpu::ShaderModule,
     ) -> PostProcessingBuilder<'a> {
@@ -191,6 +211,168 @@ impl Graphics {
     }
 }
 
+pub struct BindGroupLayoutBuilder<'a> {
+    gfx: &'a Graphics,
+    label: Option<&'a str>,
+    entries: SmallVec<[wgpu::BindGroupLayoutEntry; 4]>,
+}
+
+impl<'a> BindGroupLayoutBuilder<'a> {
+    pub fn label(mut self, name: &'a str) -> Self {
+        self.label = Some(name);
+        self
+    }
+
+    pub fn uniform_buffer_binding(mut self, binding: u32, visibility: wgpu::ShaderStages) -> Self {
+        self.entries.push(wgpu::BindGroupLayoutEntry {
+            binding,
+            visibility,
+            ty: wgpu::BindingType::Buffer {
+                ty: wgpu::BufferBindingType::Uniform,
+                has_dynamic_offset: false,
+                min_binding_size: None,
+            },
+            count: None,
+        });
+        self
+    }
+
+    pub fn sampler_binding(
+        mut self,
+        binding: u32,
+        visibility: wgpu::ShaderStages,
+        ty: wgpu::SamplerBindingType,
+    ) -> Self {
+        self.entries.push(wgpu::BindGroupLayoutEntry {
+            binding,
+            visibility,
+            ty: wgpu::BindingType::Sampler(ty),
+            count: None,
+        });
+        self
+    }
+
+    pub fn texture_binding(
+        mut self,
+        binding: u32,
+        visibility: wgpu::ShaderStages,
+        sample_type: wgpu::TextureSampleType,
+        view_dimension: wgpu::TextureViewDimension,
+        multisampled: bool,
+    ) -> Self {
+        self.entries.push(wgpu::BindGroupLayoutEntry {
+            binding,
+            visibility,
+            ty: wgpu::BindingType::Texture {
+                sample_type,
+                view_dimension,
+                multisampled,
+            },
+            count: None,
+        });
+        self
+    }
+
+    pub fn texture_filterable_binding(
+        self,
+        binding: u32,
+        visibility: wgpu::ShaderStages,
+        view_dimension: wgpu::TextureViewDimension,
+        multisampled: bool,
+    ) -> Self {
+        self.texture_binding(
+            binding,
+            visibility,
+            wgpu::TextureSampleType::Float { filterable: true },
+            view_dimension,
+            multisampled,
+        )
+    }
+
+    pub fn texture_depth_binding(
+        self,
+        binding: u32,
+        visibility: wgpu::ShaderStages,
+        view_dimension: wgpu::TextureViewDimension,
+        multisampled: bool,
+    ) -> Self {
+        self.texture_binding(
+            binding,
+            visibility,
+            wgpu::TextureSampleType::Depth,
+            view_dimension,
+            multisampled,
+        )
+    }
+
+    pub fn finish(self) -> wgpu::BindGroupLayout {
+        self.gfx
+            .device
+            .create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: self.label,
+                entries: &self.entries,
+            })
+    }
+}
+
+pub struct BindGroupBuilder<'a> {
+    gfx: &'a Graphics,
+    label: Option<&'a str>,
+    entries: SmallVec<[wgpu::BindGroupEntry<'a>; 4]>,
+    layout: &'a wgpu::BindGroupLayout,
+}
+
+impl<'a> BindGroupBuilder<'a> {
+    pub fn label(mut self, name: &'a str) -> Self {
+        self.label = Some(name);
+        self
+    }
+
+    pub fn buffer_binding(
+        mut self,
+        binding: u32,
+        buffer: &'a wgpu::Buffer,
+        offset: u64,
+        size: impl Into<Option<u64>>,
+    ) -> Self {
+        self.entries.push(wgpu::BindGroupEntry {
+            binding,
+            resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                buffer,
+                offset,
+                size: size.into().map(|i| NonZero::new(i).unwrap()),
+            }),
+        });
+        self
+    }
+
+    pub fn sampler_binding(mut self, binding: u32, sampler: &'a wgpu::Sampler) -> Self {
+        self.entries.push(wgpu::BindGroupEntry {
+            binding,
+            resource: wgpu::BindingResource::Sampler(sampler),
+        });
+        self
+    }
+
+    pub fn texture_view_binding(mut self, binding: u32, view: &'a wgpu::TextureView) -> Self {
+        self.entries.push(wgpu::BindGroupEntry {
+            binding,
+            resource: wgpu::BindingResource::TextureView(view),
+        });
+        self
+    }
+
+    pub fn finish(self) -> wgpu::BindGroup {
+        self.gfx
+            .device
+            .create_bind_group(&wgpu::BindGroupDescriptor {
+                label: self.label,
+                entries: &self.entries,
+                layout: self.layout,
+            })
+    }
+}
+
 pub struct PostProcessingBuilder<'a> {
     gfx: &'a Graphics,
     shader: &'a wgpu::ShaderModule,
@@ -203,7 +385,7 @@ pub struct PostProcessingBuilder<'a> {
 }
 
 impl<'a> PostProcessingBuilder<'a> {
-    pub fn name(mut self, name: &'a str) -> Self {
+    pub fn label(mut self, name: &'a str) -> Self {
         self.name = Some(name);
         self
     }
@@ -233,7 +415,7 @@ impl<'a> PostProcessingBuilder<'a> {
         self
     }
 
-    pub fn build(self) -> wgpu::RenderPipeline {
+    pub fn finish(self) -> wgpu::RenderPipeline {
         self.gfx
             .device
             .create_render_pipeline(&wgpu::RenderPipelineDescriptor {

@@ -17,10 +17,6 @@ struct CameraUniform {
 
 struct GlobalUniform {
     time: f32,
-    pre_saturation: f32,
-    post_saturation: f32,
-    gamma: f32,
-    exposure: f32,
 }
 
 @group(0) 

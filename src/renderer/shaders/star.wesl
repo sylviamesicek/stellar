@@ -12,10 +12,6 @@ struct CameraUniform {
 
 struct GlobalUniform {
     time: f32,
-    pre_saturation: f32,
-    post_saturation: f32,
-    gamma: f32,
-    exposure: f32,
 }
 
 @group(0) 
@@ -29,11 +25,18 @@ var<uniform> global: GlobalUniform;
 struct StarUniform {
     origin: vec3f,
     radius: f32,
+    temp: f32,
+    _u1: f32,
+    _u2: f32,
+    _u3: f32,
 }
 
-@group(1)
-@binding(0)
+@group(1) @binding(0)
 var<uniform> star: StarUniform;
+@group(1) @binding(1)
+var black_body: texture_1d<f32>;
+@group(1) @binding(2)
+var s: sampler;
 
 //  MIT License. © Ian McEwan, Stefan Gustavson, Munrocket
 //
@@ -302,8 +305,6 @@ fn ray_marcher(ro: vec3f, rd: vec3f) -> vec4f {
         }
     }
 
-    let iterations = f32(steps) + log(log(maximum_distance)) / log(2.0) - log(log(dot(cur_pos, cur_pos))) / log(2.0);
-
     // if hit && fractal_type == 1 {
     //     color = vec3(0.8 + length(cur_pos) / 8.5, 1.0, 0.8);
     //     color = hsv2rgb(color);
@@ -317,6 +318,9 @@ fn ray_marcher(ro: vec3f, rd: vec3f) -> vec4f {
     //     color /= map(sin(global.time * 3.0), -1.0, 1.0, 3000.0, 50000.0);
     // }
 
+    let u = (star.temp - 800.0f) / 29200.0f;
+    let bb = textureSample(black_body, s, u);
+
     if hit {
         // Compute the normal
         let normal = normalize(cur_pos - star.origin);
@@ -325,7 +329,7 @@ fn ray_marcher(ro: vec3f, rd: vec3f) -> vec4f {
         color = vec3(0.8 + normal.x / 8.5, 1.0, 0.8);
         color = hsv2rgb(color);
 
-        let fpos = vec4(npos, global.time / 500.0);
+        let fpos = vec4(npos, global.time / 200.0);
         let n = (noise4d(fpos, 4, 40.0, 0.7) + 1.0) * 0.5;
 
         let spos = fpos * star.radius;
@@ -335,7 +339,8 @@ fn ray_marcher(ro: vec3f, rd: vec3f) -> vec4f {
         let t2 = simplex_noise_4d((spos + star.radius) * frequency) - s;
         let ss = (max(t1, 0.0) * max(t2, 0.0)) * 2.0;
         let total = n - ss;
-        let pcolor = vec4(total, total, total, 1.0);
+
+        let pcolor = vec4(total * bb.rgb, 1.0);
         return pcolor;
     } else {
         color = vec3(0.0);

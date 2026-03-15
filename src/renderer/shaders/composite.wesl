@@ -5,28 +5,16 @@ var hdr_color: texture_2d<f32>;
 @group(0) @binding(1)
 var hdr_sampler: sampler;
 
-struct CameraUniform {
-    proj: mat4x4f,
-    view: mat4x4f,
-    inv_proj: mat4x4f,
-    inv_view: mat4x4f,
-}
-
-struct GlobalUniform {
-    time: f32,
+struct CompositeUniform {
     pre_saturation: f32,
     post_saturation: f32,
     gamma: f32,
     exposure: f32,
 }
 
-@group(1) 
-@binding(0)
-var<uniform> camera: CameraUniform;
-
 @group(1)
-@binding(1)
-var<uniform> global: GlobalUniform;
+@binding(0)
+var<uniform> composite: CompositeUniform;
 
 // --------------------------------------
 // --- SomewhatBoringDisplayTransform ---
@@ -35,8 +23,8 @@ var<uniform> global: GlobalUniform;
 
 fn rgb_to_ycbcr(col: vec3<f32>) -> vec3<f32> {
     let m = mat3x3<f32>(
-        0.2126, 0.7152, 0.0722, 
-        -0.1146, -0.3854, 0.5, 
+        0.2126, 0.7152, 0.0722,
+        -0.1146, -0.3854, 0.5,
         0.5, -0.4542, -0.0458
     );
     return col * m;
@@ -44,8 +32,8 @@ fn rgb_to_ycbcr(col: vec3<f32>) -> vec3<f32> {
 
 fn ycbcr_to_rgb(col: vec3<f32>) -> vec3<f32> {
     let m = mat3x3<f32>(
-        1.0, 0.0, 1.5748, 
-        1.0, -0.1873, -0.4681, 
+        1.0, 0.0, 1.5748,
+        1.0, -0.1873, -0.4681,
         1.0, 1.8556, 0.0
     );
     return max(vec3(0.0), col * m);
@@ -116,14 +104,14 @@ fn RRTAndODTFit(v: vec3<f32>) -> vec3<f32> {
     return a / b;
 }
 
-fn ACESFitted(in_color: vec3<f32>) -> vec3<f32> {    
+fn ACESFitted(in_color: vec3<f32>) -> vec3<f32> {
     var color = in_color;
 
     // sRGB => XYZ => D65_2_D60 => AP1 => RRT_SAT
     let rgb_to_rrt = mat3x3<f32>(
         vec3(0.59719, 0.35458, 0.04823),
         vec3(0.07600, 0.90834, 0.01566),
-        vec3(0.02840, 0.13383, 0.83777)    
+        vec3(0.02840, 0.13383, 0.83777)
     );
 
     // ODT_SAT => XYZ => D60_2_D65 => sRGB
@@ -204,7 +192,6 @@ fn convertNormalizedLog2ToOpenDomain(in_color: vec3<f32>, minimum_ev: f32, maxim
     return color;
 }
 
-
 /*=================
     Main processes
 =================*/
@@ -218,7 +205,7 @@ fn applyAgXLog(in_Image: vec3<f32>) -> vec3<f32> {
     Image = vec3(r, g, b);
 
     Image = convertOpenDomainToNormalizedLog2(Image, -10.0, 6.5);
-    
+
     Image = clamp(Image, vec3(0.0), vec3(1.0));
     return Image;
 }
@@ -279,10 +266,10 @@ fn tone_mapping(in: vec4<f32>) -> vec4<f32> {
     // Possible future grading:
 
     // highlight gain gamma: 0..
-    let luma = powsafe(vec3(tonemapping_luminance(color)), 1.0); 
+    let luma = powsafe(vec3(tonemapping_luminance(color)), 1.0);
 
     // highlight gain: 0.. 
-    color += color * luma.xxx * 1.0; 
+    color += color * luma.xxx * 1.0;
 
     // Linear pre tonemapping grading
     // color = saturation(color, params.pre_saturation);
@@ -290,38 +277,37 @@ fn tone_mapping(in: vec4<f32>) -> vec4<f32> {
     // color = color * powsafe(vec3(2.0), params.exposure);
     // color = max(color, vec3(0.0));
 
-    color = saturation(color, global.pre_saturation);
-    color = powsafe(color, global.gamma);
-    color = color * powsafe(vec3(2.0), global.exposure);
+    color = saturation(color, composite.pre_saturation);
+    color = powsafe(color, composite.gamma);
+    color = color * powsafe(vec3(2.0), composite.exposure);
     color = max(color, vec3(0.0));
 
     // tone_mapping
-// #ifdef TONEMAP_METHOD_NONE
-//     color = color;
-// #else ifdef TONEMAP_METHOD_REINHARD
+    // #ifdef TONEMAP_METHOD_NONE
+    //     color = color;
+    // #else ifdef TONEMAP_METHOD_REINHARD
     // color = tonemapping_reinhard(color.rgb);
-// #else ifdef TONEMAP_METHOD_REINHARD_LUMINANCE
+    // #else ifdef TONEMAP_METHOD_REINHARD_LUMINANCE
     // color = tonemapping_reinhard_luminance(color.rgb);
-// #else ifdef TONEMAP_METHOD_ACES_FITTED
+    // #else ifdef TONEMAP_METHOD_ACES_FITTED
     color = ACESFitted(color.rgb);
-// #else ifdef TONEMAP_METHOD_AGX
+    // #else ifdef TONEMAP_METHOD_AGX
     // color = applyAgXLog(color);
     // color = applyLUT3D(color, 32.0);
-// #else ifdef TONEMAP_METHOD_SOMEWHAT_BORING_DISPLAY_TRANSFORM
+    // #else ifdef TONEMAP_METHOD_SOMEWHAT_BORING_DISPLAY_TRANSFORM
     // color = somewhat_boring_display_transform(color.rgb);
-// #else ifdef TONEMAP_METHOD_TONY_MC_MAPFACE
+    // #else ifdef TONEMAP_METHOD_TONY_MC_MAPFACE
     // color = sample_tony_mc_mapface_lut(color); 
-// #else ifdef TONEMAP_METHOD_BLENDER_FILMIC
+    // #else ifdef TONEMAP_METHOD_BLENDER_FILMIC
     // color = sample_blender_filmic_lut(color.rgb);
-// #endif
+    // #endif
 
     // color = color * screen_space_dither(gl_FragCoord.xy);
 
     // Perceptual post tonemapping grading
     // color = saturation(color, params.post_saturation);
-    color = saturation(color, global.post_saturation);
+    color = saturation(color, composite.post_saturation);
 
-    
     return vec4(color, in.a);
 }
 
@@ -358,14 +344,13 @@ fn tone_mapping(in: vec4<f32>) -> vec4<f32> {
 //   return pow(result, 2.2);
 // }
 
-
 @fragment
 fn fs_main(@builtin(position) position: vec4f, @location(0) uv: vec2f) -> @location(0) vec4<f32> {
     var hrd_color: vec4f = textureSample(hdr_color, hdr_sampler, uv);
 
     // Mostly taken from https://github.com/bevyengine/bevy/blob/main/crates/bevy_core_pipeline/src/tonemapping/tonemapping_shared.wgsl
 
-// #ifdef DEBAND_DITHER
+    // #ifdef DEBAND_DITHER
     var output_rgb = tone_mapping(hrd_color).rgb;
     output_rgb = powsafe(output_rgb, 1.0 / 2.2);
     output_rgb = output_rgb + screen_space_dither(position.xy);
@@ -375,7 +360,7 @@ fn fs_main(@builtin(position) position: vec4f, @location(0) uv: vec2f) -> @locat
     // This is terrible terrible terrible ... but works for now until
     // all the sRGB views/targets are fixed.
 
-// #endif
+    // #endif
 
     return vec4f(output_rgb, hrd_color.a);
 }
