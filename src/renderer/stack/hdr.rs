@@ -84,7 +84,7 @@ impl HdrTextures {
     }
 
     /// Size of hdr render attachments.
-    pub fn physical_size(&self) -> [u32; 2] {
+    pub fn _physical_size(&self) -> [u32; 2] {
         self.physical_size
     }
 }

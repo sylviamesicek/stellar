@@ -294,3 +294,45 @@ impl Default for Global {
         }
     }
 }
+
+#[derive(Clone, Debug)]
+pub struct Star {
+    pub temperature: f32,
+    pub sunspot_threshold: f32,
+    pub sunspot_frequency: f32,
+    pub granule_frequency: f32,
+    pub granule_persistence: f32,
+    pub color_shift: bool,
+    pub time_scale: f32,
+}
+
+impl Star {
+    pub fn sun() -> Self {
+        Self::default()
+    }
+
+    pub fn with_temperature(self, temperature: f32) -> Self {
+        Self {
+            temperature,
+            ..self
+        }
+    }
+
+    pub fn with_time_scale(self, time_scale: f32) -> Self {
+        Self { time_scale, ..self }
+    }
+}
+
+impl Default for Star {
+    fn default() -> Self {
+        Self {
+            temperature: 5778.0,
+            sunspot_threshold: 0.2,
+            sunspot_frequency: 5.0,
+            granule_frequency: 40.0,
+            granule_persistence: 0.7,
+            color_shift: true,
+            time_scale: 200.0,
+        }
+    }
+}

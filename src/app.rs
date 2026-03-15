@@ -7,7 +7,7 @@ use glam::Vec3;
 use hecs::World;
 
 use crate::components::{
-    BloomCompositeMode, Camera, Global, PanOrbitController, Pipeline, update_pan_orbit_camera,
+    BloomCompositeMode, Camera, Global, PanOrbitController, Pipeline, Star, update_pan_orbit_camera,
 };
 use crate::math::{Projection, Transform};
 use crate::renderer::{DrawCameraCallback, UiCallback};
@@ -29,6 +29,8 @@ pub struct App {
     camera: hecs::Entity,
     global: hecs::Entity,
 
+    star: hecs::Entity,
+
     simulation: Simulation,
     fractal: Fractal,
 
@@ -40,8 +42,9 @@ impl App {
         Self {
             camera: hecs::Entity::DANGLING,
             global: hecs::Entity::DANGLING,
+            star: hecs::Entity::DANGLING,
 
-            simulation: Simulation::Fractal,
+            simulation: Simulation::Standard,
             fractal: Fractal::Mandlebulb,
             show_post_processing: false,
         }
@@ -64,6 +67,11 @@ impl App {
                 .build(),
         );
         self.global = world.spawn(hecs::EntityBuilder::new().add(Global::default()).build());
+        self.star = world.spawn(
+            hecs::EntityBuilder::new()
+                .add(Star::sun().with_temperature(2700.0))
+                .build(),
+        );
     }
 
     pub fn update(
@@ -173,24 +181,35 @@ impl App {
                 let mut global = world.get::<&mut Global>(self.global).unwrap();
                 global.pipeline = Pipeline::Standard;
 
-                ui.heading("Standard");
-
-                ui.heading("Camera");
-
-                let mut transform = world.get::<&mut Transform>(self.camera).unwrap();
-                ui.add(egui::Slider::new(&mut transform.translation[0], -5.0..=5.0));
-                ui.add(egui::Slider::new(&mut transform.translation[1], -5.0..=5.0));
-                ui.add(egui::Slider::new(&mut transform.translation[2], 0.0..=10.0));
-
-                let mut camera = world.get::<&mut Camera>(self.camera).unwrap();
-
-                match &mut camera.projection {
-                    Projection::Perspective(perspective_projection) => {
-                        let mut fov_degree = perspective_projection.fov.to_degrees();
-                        ui.add(egui::Slider::new(&mut fov_degree, 15.0..=150.0).text("FoV"));
-                        perspective_projection.fov = fov_degree.to_radians();
-                    }
-                    Projection::Orthographic(_) => {}
+                let mut star = world.get::<&mut Star>(self.star).unwrap();
+                ui.heading("Star");
+                ui.add(
+                    egui::Slider::new(&mut star.temperature, 800.0..=29200.0).text("Temperature"),
+                );
+                ui.add(
+                    egui::Slider::new(&mut star.granule_frequency, 0.0..=80.0)
+                        .text("Granule Frequency"),
+                );
+                ui.add(
+                    egui::Slider::new(&mut star.granule_persistence, 0.0..=1.0)
+                        .text("Granule Persistence"),
+                );
+                ui.add(
+                    egui::Slider::new(&mut star.sunspot_frequency, 0.0..=40.0)
+                        .text("Sunspot Frequency"),
+                );
+                ui.add(
+                    egui::Slider::new(&mut star.sunspot_threshold, 0.0..=1.0)
+                        .text("Sunspot Threshold"),
+                );
+                let response = ui.add(
+                    egui::Button::new("Color Shift")
+                        .selected(star.color_shift)
+                        .frame_when_inactive(star.color_shift)
+                        .frame(true),
+                );
+                if response.clicked() {
+                    star.color_shift = !star.color_shift;
                 }
             }
         });
@@ -259,7 +278,7 @@ impl App {
                     );
                     ui.add(egui::Slider::new(&mut global.tonemap.gamma, 0.0..=10.0).text("Gamma"));
                     ui.add(
-                        egui::Slider::new(&mut global.tonemap.exposure, 0.0..=10.0)
+                        egui::Slider::new(&mut global.tonemap.exposure, -10.0..=10.0)
                             .text("Exposure"),
                     );
 

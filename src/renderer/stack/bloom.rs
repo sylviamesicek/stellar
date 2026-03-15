@@ -247,7 +247,7 @@ impl BloomUniformBuffer {
 }
 
 #[derive(Debug, Clone)]
-pub struct BloomManager {
+pub struct BloomPipeline {
     downsample_first: wgpu::RenderPipeline,
     downsample_main: wgpu::RenderPipeline,
     upsample_main_additive: wgpu::RenderPipeline,
@@ -259,7 +259,7 @@ pub struct BloomManager {
     buffer: BloomUniformBuffer,
 }
 
-impl BloomManager {
+impl BloomPipeline {
     pub fn new(gfx: &Graphics, physical_size: [u32; 2]) -> Self {
         let settings = BloomSettings::NATURAL;
 

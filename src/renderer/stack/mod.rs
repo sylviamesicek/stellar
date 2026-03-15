@@ -1,22 +1,18 @@
 use crate::renderer::Graphics;
+use crate::renderer::stack::standard::StandardPipeline;
 use crate::{
     components::{Camera, Global, Pipeline},
     math::Transform,
 };
-use image::GenericImageView as _;
 use wesl::include_wesl;
-use wgpu::util::DeviceExt;
-use wgpu::{
-    BindGroupDescriptor, BindGroupEntry, BindGroupLayoutDescriptor, BindGroupLayoutEntry,
-    BindingResource, BindingType, BufferBinding, BufferBindingType, BufferDescriptor, BufferUsages,
-    RenderPass, ShaderStages,
-};
+use wgpu::{BufferDescriptor, BufferUsages, RenderPass, ShaderStages};
 
 mod bloom;
 mod composite;
 mod hdr;
+mod standard;
 
-use bloom::BloomManager;
+use bloom::BloomPipeline;
 use hdr::HdrTextures;
 
 #[derive(Debug, Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
@@ -35,13 +31,113 @@ pub struct GlobalUniform {
     time: f32,
 }
 
-#[derive(Debug, Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
-#[repr(C)]
-pub struct StarUniform {
-    origin: glam::Vec3,
-    radius: f32,
-    temp: f32,
-    _unused: glam::Vec3,
+#[derive(Debug, Clone)]
+pub struct FrameData {
+    camera_buffer: wgpu::Buffer,
+    global_buffer: wgpu::Buffer,
+
+    bind_group_layout: wgpu::BindGroupLayout,
+    bind_group: wgpu::BindGroup,
+}
+
+impl FrameData {
+    pub fn new(gfx: &Graphics) -> Self {
+        let camera_buffer = gfx.device.create_buffer(&BufferDescriptor {
+            label: Some("camera_buffer"),
+            size: size_of::<CameraUniform>() as u64,
+            usage: BufferUsages::UNIFORM | BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
+        let global_buffer = gfx.device.create_buffer(&BufferDescriptor {
+            label: Some("global_buffer"),
+            size: size_of::<GlobalUniform>() as u64,
+            usage: BufferUsages::UNIFORM | BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
+        let bind_group_layout = gfx
+            .start_bind_group_layout()
+            .label("frame_bind_group_layout")
+            .uniform_buffer_binding(0, ShaderStages::VERTEX | ShaderStages::FRAGMENT)
+            .uniform_buffer_binding(1, ShaderStages::VERTEX | ShaderStages::FRAGMENT)
+            .finish();
+
+        let bind_group = gfx
+            .start_bind_group(&bind_group_layout)
+            .buffer_binding(0, &camera_buffer, 0, None)
+            .buffer_binding(1, &global_buffer, 0, None)
+            .finish();
+
+        Self {
+            camera_buffer,
+            global_buffer,
+            bind_group_layout,
+            bind_group,
+        }
+    }
+
+    pub fn prepare(
+        &mut self,
+        _gfx: &Graphics,
+        world: &mut hecs::World,
+        camera: hecs::Entity,
+        encoder: &mut wgpu::CommandEncoder,
+        staging_belt: &mut wgpu::util::StagingBelt,
+    ) {
+        // Camera
+        {
+            let camera_handle = camera;
+            let camera = world.get::<&Camera>(camera_handle).unwrap();
+            let transform = world.get::<&Transform>(camera_handle).unwrap();
+
+            let proj = camera.projection.get_clip_from_view();
+            let inv_proj = proj.inverse();
+            let view = transform.to_matrix().inverse();
+            let inv_view = transform.to_matrix();
+
+            let mut uniform = staging_belt.write_buffer(
+                encoder,
+                &self.camera_buffer,
+                0,
+                (size_of::<CameraUniform>() as u64).try_into().unwrap(),
+            );
+            uniform.copy_from_slice(bytemuck::cast_slice(&[CameraUniform {
+                proj,
+                view,
+                inv_proj,
+                inv_view,
+            }]));
+        }
+
+        // Global
+        {
+            let global_default = Global::default();
+            let global = world
+                .query_mut::<&Global>()
+                .into_iter()
+                .next()
+                .unwrap_or(&global_default);
+
+            let time = global.time.as_secs_f32();
+
+            let mut uniform = staging_belt.write_buffer(
+                encoder,
+                &self.global_buffer,
+                0,
+                (size_of::<GlobalUniform>() as u64).try_into().unwrap(),
+            );
+            uniform.copy_from_slice(bytemuck::cast_slice(&[GlobalUniform { time }]));
+        }
+    }
+
+    pub fn bind_group_layout(&self) -> &wgpu::BindGroupLayout {
+        &self.bind_group_layout
+    }
+
+    pub fn bind_group(&self) -> &wgpu::BindGroup {
+        &self.bind_group
+    }
 }
 
 #[derive(Debug, Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
@@ -59,31 +155,22 @@ pub struct RenderStack {
 
     // Camera corresponding to this render stack.
     camera: hecs::Entity,
-
+    // HDR color texture (primary render target)
+    hdr: HdrTextures,
     // Frame Buffers
-    camera_buffer: wgpu::Buffer,
-    global_buffer: wgpu::Buffer,
-    frame_bind_group: wgpu::BindGroup,
+    frame_data: FrameData,
 
     // Composite data
     composite_buffer: wgpu::Buffer,
     composite_bind_group: wgpu::BindGroup,
 
-    // Star Upload data (temp)
-    star_buffer: wgpu::Buffer,
-    star_black_body: wgpu::Texture,
-    star_bind_group: wgpu::BindGroup,
-
-    // HDR color texture (primary render target)
-    hdr: HdrTextures,
-
-    // Star Pipeline
-    star: wgpu::RenderPipeline,
+    // Standard Pipeline
+    standard_pipeline: StandardPipeline,
     // Fractal Pipelines
     fractal: [wgpu::RenderPipeline; 2],
 
     // Bloom Manager
-    bloom_manager: BloomManager,
+    bloom_pipeline: BloomPipeline,
 
     // Composite Pipeline
     composite: wgpu::RenderPipeline,
@@ -95,33 +182,8 @@ impl RenderStack {
     pub fn new(gfx: &Graphics, camera: hecs::Entity, physical_size: [u32; 2]) -> Self {
         // Hdr Textures
         let hdr = HdrTextures::new(gfx, physical_size);
-
-        let camera_buffer = gfx.device.create_buffer(&BufferDescriptor {
-            label: Some("camera_buffer"),
-            size: size_of::<CameraUniform>() as u64,
-            usage: BufferUsages::UNIFORM | BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-
-        let global_buffer = gfx.device.create_buffer(&BufferDescriptor {
-            label: Some("global_buffer"),
-            size: size_of::<GlobalUniform>() as u64,
-            usage: BufferUsages::UNIFORM | BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-
-        let frame_bind_group_layout = gfx
-            .start_bind_group_layout()
-            .label("frame_bind_group_layout")
-            .uniform_buffer_binding(0, ShaderStages::VERTEX | ShaderStages::FRAGMENT)
-            .uniform_buffer_binding(1, ShaderStages::VERTEX | ShaderStages::FRAGMENT)
-            .finish();
-
-        let frame_bind_group = gfx
-            .start_bind_group(&frame_bind_group_layout)
-            .buffer_binding(0, &camera_buffer, 0, None)
-            .buffer_binding(1, &global_buffer, 0, None)
-            .finish();
+        // Frame Data
+        let frame_data = FrameData::new(gfx);
 
         let composite_buffer = gfx.device.create_buffer(&BufferDescriptor {
             label: Some("composite_buffer"),
@@ -141,88 +203,10 @@ impl RenderStack {
             .buffer_binding(0, &composite_buffer, 0, None)
             .finish();
 
-        let star_buffer = gfx.device.create_buffer(&BufferDescriptor {
-            label: Some("star_buffer"),
-            size: size_of::<StarUniform>() as u64,
-            usage: BufferUsages::UNIFORM | BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-
-        let star_black_body_bytes = include_bytes!("../data/star_black_body.png");
-        let star_black_body_image = image::load_from_memory(star_black_body_bytes).unwrap();
-        let star_black_body_rgba = star_black_body_image.to_rgba8();
-
-        let dimensions = star_black_body_image.dimensions();
-
-        assert!(dimensions.1 == 1);
-
-        let star_black_body_size = wgpu::Extent3d {
-            width: dimensions.0,
-            height: dimensions.1,
-            // All textures are stored as 3D, we represent our 2D texture
-            // by setting depth to 1.
-            depth_or_array_layers: 1,
-        };
-        let star_black_body = gfx.device.create_texture(&wgpu::TextureDescriptor {
-            size: star_black_body_size,
-            mip_level_count: 1, // We'll talk about this a little later
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D1,
-            // Most images are stored using sRGB, so we need to reflect that here.
-            format: wgpu::TextureFormat::Rgba8UnormSrgb,
-            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
-            label: Some("star_black_body_texture"),
-            view_formats: &[],
-        });
-        gfx.queue.write_texture(
-            // Tells wgpu where to copy the pixel data
-            wgpu::TexelCopyTextureInfo {
-                texture: &star_black_body,
-                mip_level: 0,
-                origin: wgpu::Origin3d::ZERO,
-                aspect: wgpu::TextureAspect::All,
-            },
-            // The actual pixel data
-            &star_black_body_rgba,
-            // The layout of the texture
-            wgpu::TexelCopyBufferLayout {
-                offset: 0,
-                bytes_per_row: Some(4 * dimensions.0),
-                rows_per_image: Some(dimensions.1),
-            },
-            star_black_body_size,
-        );
-        let star_black_body_view = star_black_body.create_view(&wgpu::TextureViewDescriptor {
-            ..Default::default()
-        });
-
-        let star_bind_group_layout = gfx
-            .start_bind_group_layout()
-            .label("star_bind_group_layout")
-            .uniform_buffer_binding(0, ShaderStages::VERTEX | ShaderStages::FRAGMENT)
-            .texture_filterable_binding(
-                1,
-                ShaderStages::FRAGMENT,
-                wgpu::TextureViewDimension::D1,
-                false,
-            )
-            .sampler_binding(
-                2,
-                ShaderStages::FRAGMENT,
-                wgpu::SamplerBindingType::Filtering,
-            )
-            .finish();
-
-        let star_bind_group = gfx
-            .start_bind_group(&star_bind_group_layout)
-            .label("star_bind_group")
-            .buffer_binding(0, &star_buffer, 0, None)
-            .texture_view_binding(1, &star_black_body_view)
-            .sampler_binding(2, &hdr.sampler)
-            .finish();
-
-        // Bloom Manager
-        let bloom_manager = BloomManager::new(gfx, physical_size);
+        // Standard Pipeline
+        let standard_pipeline = StandardPipeline::new(gfx, &frame_data);
+        // Bloom Pipeline
+        let bloom_pipeline = BloomPipeline::new(gfx, physical_size);
 
         // *******************************
         // Composite Pipeline
@@ -238,24 +222,10 @@ impl RenderStack {
             .finish();
 
         // *****************************
-        // Star Pipeline
-
-        let star_shader = gfx.create_shader_module("star", include_wesl!("star"));
-        let star_layout =
-            gfx.create_pipeline_layout(0, &[&frame_bind_group_layout, &star_bind_group_layout]);
-
-        let star = gfx
-            .start_post_processing_pipeline(&star_shader)
-            .label("sierpinski")
-            .color_format(gfx.hdr_format)
-            .layout(&star_layout)
-            .finish();
-
-        // *****************************
         // Fractal Pipelines
 
         let fractal_shader = gfx.create_shader_module("fractal", include_wesl!("fractal"));
-        let fractal_layout = gfx.create_pipeline_layout(0, &[&frame_bind_group_layout]);
+        let fractal_layout = gfx.create_pipeline_layout(0, &[frame_data.bind_group_layout()]);
 
         let mandlebulb = gfx
             .start_post_processing_pipeline(&fractal_shader)
@@ -281,25 +251,20 @@ impl RenderStack {
         Self {
             physical_size,
 
+            hdr,
+
             camera,
-            camera_buffer,
-            global_buffer,
-            frame_bind_group,
+
+            frame_data,
 
             composite_buffer,
             composite_bind_group,
 
-            star_buffer,
-            star_black_body,
-            star_bind_group,
-
-            bloom_manager,
-
-            hdr,
+            standard_pipeline,
+            bloom_pipeline,
 
             composite,
 
-            star,
             fractal: [mandlebulb, sierpinski],
 
             staging_belt,
@@ -316,52 +281,15 @@ impl RenderStack {
         world: &mut hecs::World,
         encoder: &mut wgpu::CommandEncoder,
     ) {
-        // Camera
-        {
-            let camera = world.get::<&Camera>(self.camera).unwrap();
-            let transform = world.get::<&Transform>(self.camera).unwrap();
+        self.frame_data
+            .prepare(gfx, world, self.camera, encoder, &mut self.staging_belt);
 
-            let proj = camera.projection.get_clip_from_view();
-            let inv_proj = proj.inverse();
-            let view = transform.to_matrix().inverse();
-            let inv_view = transform.to_matrix();
-
-            let mut uniform = self.staging_belt.write_buffer(
-                encoder,
-                &self.camera_buffer,
-                0,
-                (size_of::<CameraUniform>() as u64).try_into().unwrap(),
-            );
-            uniform.copy_from_slice(bytemuck::cast_slice(&[CameraUniform {
-                proj,
-                view,
-                inv_proj,
-                inv_view,
-            }]));
-        }
-
-        // Global
-        {
-            let global_default = Global::default();
-            let global = world
-                .query_mut::<&Global>()
-                .into_iter()
-                .next()
-                .unwrap_or(&global_default);
-
-            let time = global.time.as_secs_f32();
-
-            let mut uniform = self.staging_belt.write_buffer(
-                encoder,
-                &self.global_buffer,
-                0,
-                (size_of::<GlobalUniform>() as u64).try_into().unwrap(),
-            );
-            uniform.copy_from_slice(bytemuck::cast_slice(&[GlobalUniform { time }]));
-        }
+        // Standard
+        self.standard_pipeline
+            .prepare(gfx, world, encoder, &mut self.staging_belt);
 
         // Bloom
-        self.bloom_manager.prepare(
+        self.bloom_pipeline.prepare(
             gfx,
             world,
             self.physical_size,
@@ -392,22 +320,6 @@ impl RenderStack {
             }]));
         }
 
-        // Star
-        {
-            let mut uniform = self.staging_belt.write_buffer(
-                encoder,
-                &self.star_buffer,
-                0,
-                (size_of::<StarUniform>() as u64).try_into().unwrap(),
-            );
-            uniform.copy_from_slice(bytemuck::cast_slice(&[StarUniform {
-                origin: glam::Vec3::ZERO,
-                radius: 1.0,
-                temp: 2700.0,
-                _unused: glam::Vec3::ZERO,
-            }]));
-        }
-
         self.staging_belt.finish();
     }
 
@@ -424,24 +336,6 @@ impl RenderStack {
             .next()
             .unwrap_or(&global_default);
 
-        let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                view: self.hdr.color_view(),
-                resolve_target: None,
-                ops: wgpu::Operations {
-                    load: wgpu::LoadOp::Clear(wgpu::Color {
-                        r: 1.0,
-                        g: 0.24,
-                        b: 0.0,
-                        a: 1.0,
-                    }),
-                    store: wgpu::StoreOp::Store,
-                },
-                depth_slice: None,
-            })],
-            depth_stencil_attachment: None,
-            ..Default::default()
-        });
         match global.pipeline {
             Pipeline::Mandlebulb | Pipeline::Sierpinski => {
                 let fractal_index = match global.pipeline {
@@ -450,21 +344,36 @@ impl RenderStack {
                     _ => 0,
                 };
 
+                let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                        view: self.hdr.color_view(),
+                        resolve_target: None,
+                        ops: wgpu::Operations {
+                            load: wgpu::LoadOp::Clear(wgpu::Color {
+                                r: 1.0,
+                                g: 0.24,
+                                b: 0.0,
+                                a: 1.0,
+                            }),
+                            store: wgpu::StoreOp::Store,
+                        },
+                        depth_slice: None,
+                    })],
+                    depth_stencil_attachment: None,
+                    ..Default::default()
+                });
+
                 render_pass.set_pipeline(&self.fractal[fractal_index]);
-                render_pass.set_bind_group(0, &self.frame_bind_group, &[]);
+                render_pass.set_bind_group(0, self.frame_data.bind_group(), &[]);
                 render_pass.draw(0..3, 0..1);
             }
             Pipeline::Standard => {
-                render_pass.set_pipeline(&self.star);
-                render_pass.set_bind_group(0, &self.frame_bind_group, &[]);
-                render_pass.set_bind_group(1, &self.star_bind_group, &[]);
-                render_pass.draw(0..3, 0..1);
+                self.standard_pipeline
+                    .render(gfx, world, &self.hdr, &self.frame_data, encoder);
             }
         }
 
-        drop(render_pass);
-
-        self.bloom_manager.render(gfx, world, &self.hdr, encoder);
+        self.bloom_pipeline.render(gfx, world, &self.hdr, encoder);
     }
 
     pub fn recall(&mut self, _gfx: &Graphics, _world: &mut hecs::World) {

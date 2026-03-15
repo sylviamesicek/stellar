@@ -9,6 +9,6 @@ This project uses the `wgpu` crate for rendering, `hecs` ecs for application man
     - Sierpinski's Tetrahedron ![Sierpinski3d](figures/sierpinski3d.png)
 - Basic Star rendering ![Star](figures/star.png)
 - Post-processing pipeline
-    - Bloom 
+    - Bloom
     - ACES Tone-mapping
 
