@@ -268,7 +268,7 @@ fn hsv2rgb(color: vec3f) -> vec3f {
 
 fn distance_estimator(point: vec3f) -> f32 {
     var p = point;
-    return abs(distance(point, star.origin) - star.radius);
+    return distance(point, star.origin) - star.radius;
 }
 
 fn ray_marcher(ro: vec3f, rd: vec3f) -> vec4f {

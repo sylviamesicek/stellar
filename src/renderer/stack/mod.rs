@@ -59,8 +59,8 @@ impl FrameData {
         let bind_group_layout = gfx
             .start_bind_group_layout()
             .label("frame_bind_group_layout")
-            .uniform_buffer_binding(0, ShaderStages::VERTEX | ShaderStages::FRAGMENT)
-            .uniform_buffer_binding(1, ShaderStages::VERTEX | ShaderStages::FRAGMENT)
+            .uniform_binding(0, ShaderStages::VERTEX | ShaderStages::FRAGMENT)
+            .uniform_binding(1, ShaderStages::VERTEX | ShaderStages::FRAGMENT)
             .finish();
 
         let bind_group = gfx
@@ -195,7 +195,7 @@ impl RenderStack {
         let composite_bind_group_layout = gfx
             .start_bind_group_layout()
             .label("composite_bind_group_layout")
-            .uniform_buffer_binding(0, ShaderStages::VERTEX | ShaderStages::FRAGMENT)
+            .uniform_binding(0, ShaderStages::VERTEX | ShaderStages::FRAGMENT)
             .finish();
 
         let composite_bind_group = gfx
@@ -204,7 +204,7 @@ impl RenderStack {
             .finish();
 
         // Standard Pipeline
-        let standard_pipeline = StandardPipeline::new(gfx, &frame_data);
+        let standard_pipeline = StandardPipeline::new(gfx, &frame_data, physical_size);
         // Bloom Pipeline
         let bloom_pipeline = BloomPipeline::new(gfx, physical_size);
 
@@ -273,6 +273,7 @@ impl RenderStack {
 
     pub fn resize(&mut self, gfx: &Graphics, physical_size: [u32; 2]) {
         self.hdr.resize(gfx, physical_size);
+        self.standard_pipeline.resize(gfx, physical_size);
     }
 
     pub fn prepare(

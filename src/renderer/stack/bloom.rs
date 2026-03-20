@@ -192,7 +192,7 @@ impl BloomUniformBuffer {
         let bind_group_layout = gfx
             .start_bind_group_layout()
             .label("bloom_bind_group_layout")
-            .uniform_buffer_binding(0, wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT)
+            .uniform_binding(0, wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT)
             .finish();
 
         let bind_group = gfx

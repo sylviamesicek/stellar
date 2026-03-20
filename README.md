@@ -8,6 +8,7 @@ This project uses the `wgpu` crate for rendering, `hecs` for application managem
     - Mandelbulb ![Mandelbulb](figures/mandelbulb.png)
     - Sierpinski's Tetrahedron ![Sierpinski3d](figures/sierpinski3d.png)
 - Basic star rendering ![Star](figures/star.png)
+- Skybox rendering ![Star](figures/skybox.png)
 - Post-processing pipeline
     - Bloom
     - ACES Tone-mapping

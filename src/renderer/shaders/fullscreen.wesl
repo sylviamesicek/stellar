@@ -1,3 +1,5 @@
+override depth: f32 = 0.0;
+
 // Meant to be called with 3 vertex indices: 0, 1, 2
 // draws one large triangle over the clip space like this:
 // (the asterisks represent the clip space bounds)
@@ -18,7 +20,7 @@
 // |.
 
 struct VertexOutput {
-    @builtin(position) position: vec4<f32>,
+    @builtin(position) @invariant position: vec4<f32>,
     @location(0) uv: vec2<f32>,
 }
 
@@ -40,7 +42,7 @@ fn fullscreen(vertex_index: u32) -> VertexOutput {
 
     // See the explanation above for how this works
     let uv = vec2<f32>(f32(vertex_index >> 1u), f32(vertex_index & 1u)) * 2.0;
-    let clip_position = vec4<f32>(uv * vec2<f32>(2.0, -2.0) + vec2<f32>(-1.0, 1.0), 0.0, 1.0);
+    let clip_position = vec4<f32>(uv * vec2<f32>(2.0, -2.0) + vec2<f32>(-1.0, 1.0), depth, 1.0);
 
     return VertexOutput(clip_position, uv);
 }

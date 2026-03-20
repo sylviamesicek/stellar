@@ -51,9 +51,15 @@ impl Graphics {
                 memory_hints: wgpu::MemoryHints::Performance,
                 required_features: wgpu::Features {
                     features_wgpu: wgpu::FeaturesWGPU::TEXTURE_ADAPTER_SPECIFIC_FORMAT_FEATURES,
-                    features_webgpu: wgpu::FeaturesWebGPU::RG11B10UFLOAT_RENDERABLE,
+                    features_webgpu: wgpu::FeaturesWebGPU::RG11B10UFLOAT_RENDERABLE
+                        | wgpu::FeaturesWebGPU::IMMEDIATES,
                 },
-                required_limits: wgpu::Limits::defaults().using_resolution(adapter.limits()),
+                required_limits: wgpu::Limits {
+                    max_immediate_size: 128,
+                    max_color_attachment_bytes_per_sample: 48,
+                    ..wgpu::Limits::defaults()
+                }
+                .using_resolution(adapter.limits()),
                 experimental_features: wgpu::ExperimentalFeatures::disabled(),
                 trace: wgpu::Trace::Off,
             })
@@ -209,6 +215,42 @@ impl Graphics {
             entry_point: None,
         }
     }
+
+    pub fn fullscreen_vertex_state<'a>(&'a self) -> wgpu::VertexState<'a> {
+        wgpu::VertexState {
+            module: &self.fullscreen_shader,
+            entry_point: Some("vs_main"),
+            compilation_options: wgpu::PipelineCompilationOptions::default(),
+            buffers: &[],
+        }
+    }
+
+    pub fn fullscreen_vertex_state_with_constants<'a>(
+        &'a self,
+        constants: &'a [(&'a str, f64)],
+    ) -> wgpu::VertexState<'a> {
+        wgpu::VertexState {
+            module: &self.fullscreen_shader,
+            entry_point: Some("vs_main"),
+            compilation_options: wgpu::PipelineCompilationOptions {
+                constants,
+                ..Default::default()
+            },
+            buffers: &[],
+        }
+    }
+
+    pub fn fullscreen_primitive_state(&self) -> wgpu::PrimitiveState {
+        wgpu::PrimitiveState {
+            topology: wgpu::PrimitiveTopology::TriangleList,
+            strip_index_format: None,
+            front_face: wgpu::FrontFace::Ccw,
+            cull_mode: None,
+            unclipped_depth: false,
+            polygon_mode: wgpu::PolygonMode::Fill,
+            conservative: false,
+        }
+    }
 }
 
 pub struct BindGroupLayoutBuilder<'a> {
@@ -223,12 +265,31 @@ impl<'a> BindGroupLayoutBuilder<'a> {
         self
     }
 
-    pub fn uniform_buffer_binding(mut self, binding: u32, visibility: wgpu::ShaderStages) -> Self {
+    pub fn uniform_binding(mut self, binding: u32, visibility: wgpu::ShaderStages) -> Self {
         self.entries.push(wgpu::BindGroupLayoutEntry {
             binding,
             visibility,
             ty: wgpu::BindingType::Buffer {
                 ty: wgpu::BufferBindingType::Uniform,
+                has_dynamic_offset: false,
+                min_binding_size: None,
+            },
+            count: None,
+        });
+        self
+    }
+
+    pub fn storage_buffer_binding(
+        mut self,
+        binding: u32,
+        visibility: wgpu::ShaderStages,
+        read_only: bool,
+    ) -> Self {
+        self.entries.push(wgpu::BindGroupLayoutEntry {
+            binding,
+            visibility,
+            ty: wgpu::BindingType::Buffer {
+                ty: wgpu::BufferBindingType::Storage { read_only },
                 has_dynamic_offset: false,
                 min_binding_size: None,
             },

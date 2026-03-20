@@ -7,6 +7,9 @@ pub struct HdrTextures {
     color: wgpu::Texture,
     color_view: wgpu::TextureView,
 
+    depth: wgpu::Texture,
+    depth_view: wgpu::TextureView,
+
     bind_group_layout: wgpu::BindGroupLayout,
     color_bind_group: wgpu::BindGroup,
 
@@ -19,6 +22,9 @@ impl HdrTextures {
 
         let color = create_hdr_color(gfx, physical_size[0], physical_size[1]);
         let color_view = create_hdr_color_view(&color);
+
+        let depth = create_hdr_depth(gfx, physical_size[0], physical_size[1]);
+        let depth_view = create_hdr_depth_view(&depth);
 
         let bind_group_layout = gfx
             .start_bind_group_layout()
@@ -42,6 +48,8 @@ impl HdrTextures {
             sampler,
             color,
             color_view,
+            depth,
+            depth_view,
             bind_group_layout,
             color_bind_group: bind_group,
             physical_size,
@@ -69,6 +77,9 @@ impl HdrTextures {
             &self.color_view,
             &self.sampler,
         );
+
+        self.depth = create_hdr_depth(gfx, physical_size[0], physical_size[1]);
+        self.depth_view = create_hdr_depth_view(&self.depth);
     }
 
     pub fn bind_group_layout(&self) -> &wgpu::BindGroupLayout {
@@ -81,6 +92,10 @@ impl HdrTextures {
 
     pub fn color_bind_group(&self) -> &wgpu::BindGroup {
         &self.color_bind_group
+    }
+
+    pub fn depth_view(&self) -> &wgpu::TextureView {
+        &self.depth_view
     }
 
     /// Size of hdr render attachments.
@@ -107,9 +122,34 @@ fn create_hdr_color(gfx: &Graphics, width: u32, height: u32) -> wgpu::Texture {
     texture
 }
 
+fn create_hdr_depth(gfx: &Graphics, width: u32, height: u32) -> wgpu::Texture {
+    let texture = gfx.device.create_texture(&wgpu::TextureDescriptor {
+        label: Some("hdr_depth_attachment"),
+        size: wgpu::Extent3d {
+            width,
+            height,
+            depth_or_array_layers: 1,
+        },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format: wgpu::TextureFormat::Depth24Plus,
+        usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+        view_formats: &[],
+    });
+    texture
+}
+
 fn create_hdr_color_view(texture: &wgpu::Texture) -> wgpu::TextureView {
     texture.create_view(&wgpu::TextureViewDescriptor {
         label: Some("hdr_color_attachment_view"),
+        ..Default::default()
+    })
+}
+
+fn create_hdr_depth_view(texture: &wgpu::Texture) -> wgpu::TextureView {
+    texture.create_view(&wgpu::TextureViewDescriptor {
+        label: Some("hdr_depth_attachment_view"),
         ..Default::default()
     })
 }
