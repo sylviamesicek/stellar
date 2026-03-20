@@ -32,6 +32,7 @@ struct SphereDesc {
     radius: f32,
     material_id: u32,
     instance_id: u32,
+    _padding: glam::UVec2,
 }
 
 #[derive(Debug, Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
@@ -129,7 +130,7 @@ impl RBuffer {
     pub fn resize(&mut self, gfx: &Graphics, physical_size: [u32; 2]) {
         self.instance = create_rbuffer_texture(
             gfx,
-            "instance_buffer",
+            "instances",
             physical_size,
             wgpu::TextureFormat::R32Uint,
         );
@@ -211,9 +212,9 @@ pub struct StandardPipeline {
     star_pipeline: wgpu::RenderPipeline,
 
     // Skybox material
-    milkyway: wgpu::Texture,
-    milkyway_view: wgpu::TextureView,
-    milkyway_sampler: wgpu::Sampler,
+    _milkyway: wgpu::Texture,
+    _milkyway_view: wgpu::TextureView,
+    _milkyway_sampler: wgpu::Sampler,
     milkyway_bind_group: wgpu::BindGroup,
 
     skybox_pipeline: wgpu::RenderPipeline,
@@ -523,9 +524,9 @@ impl StandardPipeline {
             stars_bind_group,
             star_pipeline,
 
-            milkyway,
-            milkyway_view,
-            milkyway_sampler,
+            _milkyway: milkyway,
+            _milkyway_view: milkyway_view,
+            _milkyway_sampler: milkyway_sampler,
             milkyway_bind_group,
             skybox_pipeline,
         }
@@ -567,6 +568,7 @@ impl StandardPipeline {
                 radius: transform.scale.max_element(),
                 material_id: STAR_MATERIAL_ID,
                 instance_id: instance_id,
+                _padding: glam::UVec2::ZERO,
             });
             self.stars_host.push(StarDesc {
                 origin: transform.translation,

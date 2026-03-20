@@ -29,6 +29,7 @@ struct SphereDesc {
     radius: f32,
     material_id: u32,
     instance_id: u32,
+    _padding: vec2u,
 }
 
 @group(1)

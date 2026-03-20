@@ -37,6 +37,13 @@ pub struct App {
     show_post_processing: bool,
 }
 
+pub struct StarPhysics {
+    velocity: glam::Vec3,
+    mass: f32,
+}
+
+pub struct StarAcceleration(glam::Vec3);
+
 impl App {
     pub fn new() -> Self {
         Self {
@@ -61,11 +68,12 @@ impl App {
     pub fn start(&mut self, world: &mut World) {
         let mut global = Global::default();
         global.bloom.composite_mode = BloomCompositeMode::Additive;
+        global.bloom.intensity = 0.3;
         self.global = world.spawn(hecs::EntityBuilder::new().add(global).build());
 
         self.camera = world.spawn(
             hecs::EntityBuilder::new()
-                .add(Transform::from_xyz(0.0, 0.0, 4.0).looking_at(Vec3::ZERO, Vec3::Y))
+                .add(Transform::from_xyz(-2.3, 3.5, 10.5).looking_at(Vec3::ZERO, Vec3::Y))
                 .add(Camera::perspective(f32::consts::PI / 2.0, 0.1, 1000.0))
                 .add(PanOrbitController::default())
                 .build(),
@@ -73,8 +81,37 @@ impl App {
 
         self.star = world.spawn(
             hecs::EntityBuilder::new()
-                .add(Transform::from_xyz(0.0, 0.0, 0.0).with_uniform_scale(1.0))
-                .add(Star::sun().with_temperature(2700.0))
+                .add(Transform::from_xyz(-3.0, 0.0, 0.0).with_uniform_scale(1.2))
+                .add(Star::sun().with_temperature(5800.0))
+                .add(StarPhysics {
+                    velocity: glam::vec3(0.0, 0.0, -2.3 / 2.0),
+                    mass: 40.0,
+                })
+                .add(StarAcceleration(glam::Vec3::ZERO))
+                .build(),
+        );
+
+        world.spawn(
+            hecs::EntityBuilder::new()
+                .add(Transform::from_xyz(3.0, 0.0, 0.0).with_uniform_scale(0.86))
+                .add(Star::sun().with_temperature(3500.0))
+                .add(StarPhysics {
+                    velocity: glam::vec3(0.0, 0.0, 2.3),
+                    mass: 20.0,
+                })
+                .add(StarAcceleration(glam::Vec3::ZERO))
+                .build(),
+        );
+
+        world.spawn(
+            hecs::EntityBuilder::new()
+                .add(Transform::from_xyz(-2.0, 3.0, 10.0).with_uniform_scale(0.15))
+                .add(Star::sun().with_temperature(3000.0))
+                .add(StarPhysics {
+                    velocity: glam::vec3(0.0, 0.5, 0.0),
+                    mass: 0.1,
+                })
+                .add(StarAcceleration(glam::Vec3::ZERO))
                 .build(),
         );
     }
@@ -98,6 +135,40 @@ impl App {
             ctx.input(|input| {
                 update_pan_orbit_camera(input, delta_time, transform, camera, controller);
             });
+        }
+
+        for (e, transform, _physics, acc) in world
+            .query::<(
+                hecs::Entity,
+                &Transform,
+                &StarPhysics,
+                &mut StarAcceleration,
+            )>()
+            .into_iter()
+        {
+            acc.0 = glam::Vec3::ZERO;
+
+            for (eother, transform_other, physics_other) in world
+                .query::<(hecs::Entity, &Transform, &StarPhysics)>()
+                .into_iter()
+            {
+                if eother == e {
+                    continue;
+                }
+
+                let diff = transform_other.translation - transform.translation;
+                acc.0 += physics_other.mass / diff.length().powi(3) * diff;
+            }
+        }
+
+        for (transform, physics, acc) in world
+            .query::<(&mut Transform, &mut StarPhysics, &mut StarAcceleration)>()
+            .into_iter()
+        {
+            let h = delta_time.as_secs_f32();
+
+            transform.translation += h * physics.velocity;
+            physics.velocity += h * acc.0;
         }
 
         // egui::Window::new("Stellar")
