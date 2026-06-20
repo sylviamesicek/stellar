@@ -14,10 +14,18 @@ pub use graphics::Graphics;
 use stack::RenderStack;
 pub use ui::{UiCallback, UiScreen};
 
+#[derive(Debug, Default)]
+pub struct Assets {
+    pub textures: HashMap<String, wgpu::Texture>,
+}
+
 pub struct Renderer {
     ui: UiRenderer,
-    // Render stacks associated with each camera
+    /// Render stacks associated with each camera
     stacks: HashMap<hecs::Entity, RenderStack>,
+
+    /// Rendering assets stored in memory
+    assets: Assets,
 
     // Temporary state
     paint_jobs: Vec<egui::ClippedPrimitive>,
@@ -31,6 +39,7 @@ impl Renderer {
         Self {
             ui,
             stacks: HashMap::new(),
+            assets: Assets::default(),
             paint_jobs: vec![],
             screen: UiScreen {
                 size_in_pixels: [0, 0],
@@ -84,10 +93,9 @@ impl Renderer {
 
         // Update any existing stacks
         for (e, camera, _) in world.query_mut::<(Entity, &Camera, &Transform)>() {
-            let stack = self
-                .stacks
-                .entry(e)
-                .or_insert_with(|| RenderStack::new(gfx, e, camera.physical_size()));
+            let stack = self.stacks.entry(e).or_insert_with(|| {
+                RenderStack::new(gfx, &mut self.assets, e, camera.physical_size())
+            });
 
             if camera.physical_size() != stack.physical_size {
                 stack.resize(gfx, camera.physical_size());

@@ -1,5 +1,5 @@
-use crate::renderer::Graphics;
 use crate::renderer::stack::standard::StandardPipeline;
+use crate::renderer::{Assets, Graphics};
 use crate::{
     components::{Camera, Global, Pipeline},
     math::Transform,
@@ -179,7 +179,12 @@ pub struct RenderStack {
 }
 
 impl RenderStack {
-    pub fn new(gfx: &Graphics, camera: hecs::Entity, physical_size: [u32; 2]) -> Self {
+    pub fn new(
+        gfx: &Graphics,
+        assets: &mut Assets,
+        camera: hecs::Entity,
+        physical_size: [u32; 2],
+    ) -> Self {
         // Hdr Textures
         let hdr = HdrTextures::new(gfx, physical_size);
         // Frame Data
@@ -204,7 +209,7 @@ impl RenderStack {
             .finish();
 
         // Standard Pipeline
-        let standard_pipeline = StandardPipeline::new(gfx, &frame_data, physical_size);
+        let standard_pipeline = StandardPipeline::new(gfx, assets, &frame_data, physical_size);
         // Bloom Pipeline
         let bloom_pipeline = BloomPipeline::new(gfx, physical_size);
 
@@ -270,6 +275,13 @@ impl RenderStack {
             staging_belt,
         }
     }
+
+    // /// Rebuilds the render stack using an existing camera. This avoids redoing expensive work
+    // /// like reloading assets from disk.
+    // pub fn reinit(&mut self, gfx: &Graphics, camera: hecs::Entity, physical_size: [u32; 2]) {
+    //     self.camera = camera;
+    //     self.resize(gfx, physical_size);
+    // }
 
     pub fn resize(&mut self, gfx: &Graphics, physical_size: [u32; 2]) {
         self.hdr.resize(gfx, physical_size);

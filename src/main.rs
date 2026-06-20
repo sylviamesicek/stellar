@@ -13,6 +13,7 @@ pub mod components;
 pub mod math;
 pub mod misc;
 pub mod renderer;
+pub mod state;
 pub mod toolkit;
 
 use crate::app::App;
@@ -185,21 +186,18 @@ impl ApplicationHandler for Framework {
 
                 // Handle Ui Events
                 let ui_input = ui_state.take_egui_input(window);
-                // Build Ui
+                // Run Ui
                 let ctx = ui_state.egui_ctx();
-                ctx.begin_pass(ui_input);
-
-                // Run App logic
-                app.update(world, ctx.clone(), [width, height], delta_time);
-
-                // End Building UI
                 let egui::FullOutput {
                     platform_output,
                     pixels_per_point,
                     textures_delta,
                     shapes,
                     ..
-                } = ctx.end_pass();
+                } = ctx.run_ui(ui_input, |ui| {
+                    // Run App logic and create UI
+                    app.update(world, ui, [width, height], delta_time);
+                });
                 ui_state.handle_platform_output(window, platform_output);
                 // Generate paint job
                 let paint_jobs = ui_state.egui_ctx().tessellate(shapes, pixels_per_point);

@@ -391,7 +391,7 @@ pub fn update_pan_orbit_camera(
         controller.target_radius += line_delta;
 
         // If it is pixel-based scrolling, add it directly to the current value
-        controller.radius = controller.radius.map(|value| apply_zoom_limits(value));
+        controller.radius = controller.radius.map(&apply_zoom_limits);
 
         has_moved = true;
     }

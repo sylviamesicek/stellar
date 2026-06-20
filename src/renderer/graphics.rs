@@ -153,12 +153,14 @@ impl Graphics {
         }
     }
 
+    /// Resizes graphics context and associated objects to the given window size.
     pub fn resize(&mut self, width: u32, height: u32) {
         self.surface_config.width = width;
         self.surface_config.height = height;
         self.surface.configure(&self.device, &self.surface_config);
     }
 
+    /// Constructs a new shader module from the given source code.
     pub fn create_shader_module(&self, name: &str, source: &str) -> wgpu::ShaderModule {
         self.device
             .create_shader_module(wgpu::ShaderModuleDescriptor {
@@ -167,6 +169,7 @@ impl Graphics {
             })
     }
 
+    /// Helper for `wgpu::Device::create_pipeline_layout`.
     pub fn create_pipeline_layout(
         &self,
         immediate_size: u32,
@@ -206,7 +209,7 @@ impl Graphics {
     ) -> PostProcessingBuilder<'a> {
         PostProcessingBuilder {
             gfx: self,
-            shader: shader,
+            shader,
             color_format: self.hdr_format,
             color_blend_state: None,
             name: None,
@@ -504,7 +507,7 @@ impl<'a> PostProcessingBuilder<'a> {
                     alpha_to_coverage_enabled: false,
                 },
                 fragment: Some(wgpu::FragmentState {
-                    module: &self.shader,
+                    module: self.shader,
                     entry_point: self.entry_point,
                     compilation_options: wgpu::PipelineCompilationOptions {
                         constants: &self.constants,

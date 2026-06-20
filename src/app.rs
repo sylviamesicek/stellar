@@ -3,7 +3,6 @@ use std::time::Duration;
 
 use egui::Color32;
 use egui::epaint::ViewportInPixels;
-use glam::Vec3;
 use hecs::World;
 
 use crate::components::{
@@ -11,28 +10,16 @@ use crate::components::{
 };
 use crate::math::{Projection, Transform};
 use crate::renderer::{DrawCameraCallback, UiCallback};
-
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
-enum Simulation {
-    Fractal,
-    #[default]
-    Standard,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-enum Fractal {
-    Sierpinski,
-    Mandlebulb,
-}
+use crate::state::{BlackHole2dState, FractalState, SpaceState, State};
 
 pub struct App {
-    camera: hecs::Entity,
     global: hecs::Entity,
 
-    star: hecs::Entity,
-
-    simulation: Simulation,
-    fractal: Fractal,
+    state: State,
+    prev_state: Option<State>,
+    black_hole_2d: BlackHole2dState,
+    fractal: FractalState,
+    space: SpaceState,
 
     show_post_processing: bool,
 }
@@ -44,15 +31,23 @@ pub struct StarPhysics {
 
 pub struct StarAcceleration(glam::Vec3);
 
+impl Default for App {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl App {
     pub fn new() -> Self {
         Self {
-            camera: hecs::Entity::DANGLING,
             global: hecs::Entity::DANGLING,
-            star: hecs::Entity::DANGLING,
 
-            simulation: Simulation::Standard,
-            fractal: Fractal::Mandlebulb,
+            state: State::BlackHole2d,
+            prev_state: None,
+            black_hole_2d: BlackHole2dState::new(),
+            fractal: FractalState::new(),
+            space: SpaceState::new(),
+
             show_post_processing: false,
         }
     }
@@ -71,55 +66,18 @@ impl App {
         global.bloom.intensity = 0.3;
         self.global = world.spawn(hecs::EntityBuilder::new().add(global).build());
 
-        self.camera = world.spawn(
-            hecs::EntityBuilder::new()
-                .add(Transform::from_xyz(-2.3, 3.5, 10.5).looking_at(Vec3::ZERO, Vec3::Y))
-                .add(Camera::perspective(f32::consts::PI / 2.0, 0.1, 1000.0))
-                .add(PanOrbitController::default())
-                .build(),
-        );
-
-        self.star = world.spawn(
-            hecs::EntityBuilder::new()
-                .add(Transform::from_xyz(-3.0, 0.0, 0.0).with_uniform_scale(1.2))
-                .add(Star::sun().with_temperature(5800.0))
-                .add(StarPhysics {
-                    velocity: glam::vec3(0.0, 0.0, -2.3 / 2.0),
-                    mass: 40.0,
-                })
-                .add(StarAcceleration(glam::Vec3::ZERO))
-                .build(),
-        );
-
-        world.spawn(
-            hecs::EntityBuilder::new()
-                .add(Transform::from_xyz(3.0, 0.0, 0.0).with_uniform_scale(0.86))
-                .add(Star::sun().with_temperature(3500.0))
-                .add(StarPhysics {
-                    velocity: glam::vec3(0.0, 0.0, 2.3),
-                    mass: 20.0,
-                })
-                .add(StarAcceleration(glam::Vec3::ZERO))
-                .build(),
-        );
-
-        world.spawn(
-            hecs::EntityBuilder::new()
-                .add(Transform::from_xyz(-2.0, 3.0, 10.0).with_uniform_scale(0.15))
-                .add(Star::sun().with_temperature(3000.0))
-                .add(StarPhysics {
-                    velocity: glam::vec3(0.0, 0.5, 0.0),
-                    mass: 0.1,
-                })
-                .add(StarAcceleration(glam::Vec3::ZERO))
-                .build(),
-        );
+        // Initialize initial state
+        match self.state {
+            State::BlackHole2d => self.black_hole_2d.start(world),
+            State::Fractal => self.fractal.start(world),
+            State::Space => self.space.start(world),
+        }
     }
 
     pub fn update(
         &mut self,
         world: &mut World,
-        ctx: egui::Context,
+        ui: &mut egui::Ui,
         screen: [u32; 2],
         delta_time: Duration,
     ) {
@@ -132,59 +90,25 @@ impl App {
         for (transform, camera, controller) in
             world.query_mut::<(&mut Transform, &mut Camera, &mut PanOrbitController)>()
         {
-            ctx.input(|input| {
+            ui.input(|input| {
                 update_pan_orbit_camera(input, delta_time, transform, camera, controller);
             });
         }
 
-        for (e, transform, _physics, acc) in world
-            .query::<(
-                hecs::Entity,
-                &Transform,
-                &StarPhysics,
-                &mut StarAcceleration,
-            )>()
-            .into_iter()
-        {
-            acc.0 = glam::Vec3::ZERO;
-
-            for (eother, transform_other, physics_other) in world
-                .query::<(hecs::Entity, &Transform, &StarPhysics)>()
-                .into_iter()
-            {
-                if eother == e {
-                    continue;
-                }
-
-                let diff = transform_other.translation - transform.translation;
-                acc.0 += physics_other.mass / diff.length().powi(3) * diff;
-            }
+        // Update individual state objects
+        match self.state {
+            State::BlackHole2d => self.black_hole_2d.update(world, delta_time),
+            State::Fractal => self.fractal.update(world, delta_time),
+            State::Space => self.space.update(world, delta_time),
         }
 
-        for (transform, physics, acc) in world
-            .query::<(&mut Transform, &mut StarPhysics, &mut StarAcceleration)>()
-            .into_iter()
-        {
-            let h = delta_time.as_secs_f32();
-
-            transform.translation += h * physics.velocity;
-            physics.velocity += h * acc.0;
-        }
-
-        // egui::Window::new("Stellar")
-        //     .resizable(true)
-        //     .show(&ctx, |ui| {
-        //         ui.label("Hello World");
-        //         if ui.secondary_button("Click me!").clicked() {}
-        //         ui.allocate_space(ui.available_size())
-        //     });
-
-        // Draw Top panel
-        egui::TopBottomPanel::top("top").show(&ctx, |ui| {
+        // Draw Top Panel
+        egui::Panel::top("top").show_inside(ui, |ui| {
             egui::containers::menu::MenuBar::new().ui(ui, |ui| {
                 ui.menu_button("Simulation", |ui| {
-                    ui.selectable_value(&mut self.simulation, Simulation::Fractal, "Fractal");
-                    ui.selectable_value(&mut self.simulation, Simulation::Standard, "Standard");
+                    ui.selectable_value(&mut self.state, State::BlackHole2d, "BlackHole2d");
+                    ui.selectable_value(&mut self.state, State::Fractal, "Fractal");
+                    ui.selectable_value(&mut self.state, State::Space, "Space");
                 });
                 ui.menu_button("Graphics", |ui| {
                     if ui.button("Post-Processing").clicked() {
@@ -194,163 +118,37 @@ impl App {
             });
         });
 
-        // Draw info panel
-        egui::SidePanel::left("left").show(&ctx, |ui| {
-            // ui.allocate_space(ui.available_size())
-            if self.simulation == Simulation::Fractal {
-                ui.heading("Fractal");
-
-                ui.horizontal(|ui| {
-                    ui.label("Kind:");
-
-                    egui::containers::ComboBox::from_id_salt("fractal_box")
-                        .selected_text(format!("{:?}", self.fractal))
-                        .show_ui(ui, |ui| {
-                            ui.selectable_value(
-                                &mut self.fractal,
-                                Fractal::Mandlebulb,
-                                "Mandlebulb",
-                            );
-                            ui.selectable_value(
-                                &mut self.fractal,
-                                Fractal::Sierpinski,
-                                "Sierpinski",
-                            );
-                        });
-
-                    let mut global = world.get::<&mut Global>(self.global).unwrap();
-                    match self.fractal {
-                        Fractal::Sierpinski => global.pipeline = Pipeline::Sierpinski,
-                        Fractal::Mandlebulb => global.pipeline = Pipeline::Mandlebulb,
-                    }
-                });
-
-                ui.heading("Camera");
-
-                let mut transform = world.get::<&mut Transform>(self.camera).unwrap();
-                ui.add(egui::Slider::new(&mut transform.translation[0], -5.0..=5.0));
-                ui.add(egui::Slider::new(&mut transform.translation[1], -5.0..=5.0));
-                ui.add(egui::Slider::new(&mut transform.translation[2], 0.0..=10.0));
-
-                let mut camera = world.get::<&mut Camera>(self.camera).unwrap();
-
-                match &mut camera.projection {
-                    Projection::Perspective(perspective_projection) => {
-                        let mut fov_degree = perspective_projection.fov.to_degrees();
-                        ui.add(egui::Slider::new(&mut fov_degree, 15.0..=150.0).text("FoV"));
-                        perspective_projection.fov = fov_degree.to_radians();
-                    }
-                    Projection::Orthographic(_) => {}
-                }
-
-                // let controller = world.get::<&PanOrbitController>(self.camera).unwrap();
-
-                // let mut zoom_delta = 0.0;
-                // ui.input(|input| zoom_delta = input.zoom_delta());
-                // ui.label(format!(
-                //     "{}, {:?}, {}",
-                //     controller.target_radius, controller.radius, zoom_delta
-                // ));
-
-                // drop(controller);
-            } else if self.simulation == Simulation::Standard {
-                let mut global = world.get::<&mut Global>(self.global).unwrap();
-                global.pipeline = Pipeline::Standard;
-
-                let mut star = world.get::<&mut Star>(self.star).unwrap();
-                // let mut transform = world.get::<&mut Transform>(self.star).unwrap();
-
-                ui.heading("Star");
-                // ui.add(egui::Slider::new(&mut transform.translation[0], -5.0..=5.0).text("Star X"));
-                // ui.add(egui::Slider::new(&mut transform.translation[1], -5.0..=5.0).text("Star Y"));
-                // ui.add(egui::Slider::new(&mut transform.translation[2], -5.0..=5.0).text("Star Z"));
-
-                // let mut scale = transform.scale[0];
-                // ui.add(egui::Slider::new(&mut scale, 0.0..=10.0).text("Star Radius"));
-                // transform.scale = glam::Vec3::new(scale, scale, scale);
-
-                ui.add(
-                    egui::Slider::new(&mut star.temperature, 800.0..=29200.0).text("Temperature"),
-                );
-                ui.add(
-                    egui::Slider::new(&mut star.granule_frequency, 0.0..=80.0)
-                        .text("Granule Frequency"),
-                );
-                ui.add(
-                    egui::Slider::new(&mut star.granule_persistence, 0.0..=1.0)
-                        .text("Granule Persistence"),
-                );
-                ui.add(
-                    egui::Slider::new(&mut star.sunspot_frequency, 0.0..=40.0)
-                        .text("Sunspot Frequency"),
-                );
-                ui.add(
-                    egui::Slider::new(&mut star.sunspot_threshold, 0.0..=1.0)
-                        .text("Sunspot Threshold"),
-                );
-                let response = ui.add(
-                    egui::Button::new("Color Shift")
-                        .selected(star.color_shift)
-                        .frame_when_inactive(star.color_shift)
-                        .frame(true),
-                );
-                if response.clicked() {
-                    star.color_shift = !star.color_shift;
-                }
+        // Handle any state changes
+        if let Some(prev) = self.prev_state
+            && prev != self.state
+        {
+            match prev {
+                State::Fractal => self.fractal.finish(world),
+                State::BlackHole2d => self.black_hole_2d.finish(world),
+                State::Space => self.space.finish(world),
             }
-        });
 
-        // Draw central viewport
-        egui::CentralPanel::default()
-            .frame(egui::Frame::NONE)
-            .show(&ctx, |ui| {
-                egui::Frame::canvas(ui.style())
-                    .corner_radius(0)
-                    .inner_margin(0)
-                    .outer_margin(0)
-                    .stroke(egui::Stroke::NONE)
-                    .fill(Color32::BLACK)
-                    .show(ui, |ui| {
-                        let (_, rect) = ui.allocate_space(ui.available_size());
-                        let viewport =
-                            ViewportInPixels::from_points(&rect, ui.pixels_per_point(), screen);
+            match self.state {
+                State::BlackHole2d => self.black_hole_2d.start(world),
+                State::Fractal => self.fractal.start(world),
+                State::Space => self.space.start(world),
+            }
+        }
+        // We are definiately in the correct state now
+        self.prev_state = Some(self.state);
 
-                        if viewport.width_px == 0 || viewport.height_px == 0 {
-                            return;
-                        }
-
-                        let response = ui.interact(
-                            rect,
-                            egui::Id::new("viewport_interaction"),
-                            egui::Sense::all(),
-                        );
-
-                        if response.clicked() || response.dragged() {
-                            response.request_focus();
-                        }
-
-                        // Update Camera
-                        let mut camera = world.get::<&mut Camera>(self.camera).unwrap();
-                        camera.update(viewport.width_px as u32, viewport.height_px as u32);
-                        drop(camera);
-
-                        let mut controller =
-                            world.get::<&mut PanOrbitController>(self.camera).unwrap();
-                        controller.enabled = response.has_focus();
-                        drop(controller);
-
-                        ui.painter().add(UiCallback::new_paint_callback(
-                            rect,
-                            DrawCameraCallback::new(self.camera),
-                        ));
-                    });
-            });
+        // Draw individual state ui
+        match self.state {
+            State::BlackHole2d => self.black_hole_2d.ui(world, ui, screen),
+            State::Fractal => self.fractal.ui(world, ui, screen),
+            State::Space => self.space.ui(world, ui, screen),
+        }
 
         // Draw post-processing window
         if self.show_post_processing {
             egui::Window::new("Post-Processing")
                 .open(&mut self.show_post_processing)
-                .show(&ctx, |ui| {
+                .show(ui, |ui| {
                     let mut global = world.get::<&mut Global>(self.global).unwrap();
 
                     ui.label("Tonemapping");
@@ -416,5 +214,11 @@ impl App {
         }
     }
 
-    pub fn cleanup(&mut self, _world: &mut World) {}
+    pub fn cleanup(&mut self, world: &mut World) {
+        match self.state {
+            State::Fractal => self.fractal.finish(world),
+            State::BlackHole2d => self.black_hole_2d.finish(world),
+            State::Space => self.space.finish(world),
+        }
+    }
 }

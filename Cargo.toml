@@ -6,9 +6,10 @@ edition = "2024"
 [dependencies]
 bytemuck = "1.25.0"
 color-eyre = "0.6.5"
-egui = { version = "0.33.3", features = ["bytemuck"] }
-egui-winit = "0.33.3"
-egui_extras = { version = "0.33.3", features = ["svg"] }
+egui = { version = "0.34.0", features = ["bytemuck"] }
+egui-winit = "0.34.0"
+egui_extras = { version = "0.34.0", features = ["svg"] }
+egui_plot = "0.35.0"
 env_logger = "0.11.9"
 eyre = "0.6.12"
 glam = { version = "0.32.0", features = ["bytemuck", "serde"] }

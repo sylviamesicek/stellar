@@ -23,10 +23,12 @@ impl Camera {
     }
 
     pub fn perspective(fov: f32, near: f32, far: f32) -> Camera {
-        let mut proj = PerspectiveProjection::default();
-        proj.fov = fov;
-        proj.near = near;
-        proj.far = far;
+        let proj = PerspectiveProjection {
+            fov,
+            near,
+            far,
+            ..PerspectiveProjection::default()
+        };
 
         Camera {
             projection: proj.into(),

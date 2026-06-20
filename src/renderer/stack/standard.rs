@@ -4,7 +4,7 @@ use crate::{
     components::Star,
     math::Transform,
     renderer::{
-        Graphics,
+        Assets, Graphics,
         stack::{FrameData, hdr::HdrTextures},
     },
 };
@@ -221,7 +221,12 @@ pub struct StandardPipeline {
 }
 
 impl StandardPipeline {
-    pub fn new(gfx: &Graphics, frame: &FrameData, physical_size: [u32; 2]) -> Self {
+    pub fn new(
+        gfx: &Graphics,
+        assets: &mut Assets,
+        frame: &FrameData,
+        physical_size: [u32; 2],
+    ) -> Self {
         let rbuffer: RBuffer = RBuffer::new(gfx, physical_size);
 
         let spheres_buffer = gfx.device.create_buffer(&wgpu::BufferDescriptor {
@@ -368,63 +373,71 @@ impl StandardPipeline {
 
         // Skybox
 
-        log::info!("Loading Milkway Texture...");
+        if !assets.textures.contains_key("milkyway_panorama") {
+            log::info!("Loading Milkway Texture...");
 
-        let milkyway_image = image::ImageReader::open("data/milkyway.jpg")
-            .expect("Failed to load milkyway panorama")
-            .decode()
-            .unwrap();
+            let milkyway_image = image::ImageReader::open("data/milkyway.jpg")
+                .expect("Failed to load milkyway panorama")
+                .decode()
+                .unwrap();
 
-        let milkyway_rgba = milkyway_image.to_rgba8();
-        let milkyway_dims = milkyway_image.dimensions();
+            let milkyway_rgba = milkyway_image.to_rgba8();
+            let milkyway_dims = milkyway_image.dimensions();
 
-        let milkyway = gfx.device.create_texture(&wgpu::TextureDescriptor {
-            size: wgpu::Extent3d {
-                width: milkyway_dims.0,
-                height: milkyway_dims.1,
-                depth_or_array_layers: 1,
-            },
-            mip_level_count: 1, // We'll talk about this a little later
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            // Most images are stored using sRGB, so we need to reflect that here.
-            format: wgpu::TextureFormat::Rgba8UnormSrgb,
-            // TEXTURE_BINDING tells wgpu that we want to use this texture in shaders
-            // COPY_DST means that we want to copy data to this texture
-            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
-            label: Some("milkyway_texture"),
-            // This is the same as with the SurfaceConfig. It
-            // specifies what texture formats can be used to
-            // create TextureViews for this texture. The base
-            // texture format (Rgba8UnormSrgb in this case) is
-            // always supported. Note that using a different
-            // texture format is not supported on the WebGL2
-            // backend.
-            view_formats: &[],
-        });
+            let milkyway = gfx.device.create_texture(&wgpu::TextureDescriptor {
+                size: wgpu::Extent3d {
+                    width: milkyway_dims.0,
+                    height: milkyway_dims.1,
+                    depth_or_array_layers: 1,
+                },
+                mip_level_count: 1, // We'll talk about this a little later
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                // Most images are stored using sRGB, so we need to reflect that here.
+                format: wgpu::TextureFormat::Rgba8UnormSrgb,
+                // TEXTURE_BINDING tells wgpu that we want to use this texture in shaders
+                // COPY_DST means that we want to copy data to this texture
+                usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+                label: Some("milkyway_texture"),
+                // This is the same as with the SurfaceConfig. It
+                // specifies what texture formats can be used to
+                // create TextureViews for this texture. The base
+                // texture format (Rgba8UnormSrgb in this case) is
+                // always supported. Note that using a different
+                // texture format is not supported on the WebGL2
+                // backend.
+                view_formats: &[],
+            });
 
-        gfx.queue.write_texture(
-            // Tells wgpu where to copy the pixel data
-            wgpu::TexelCopyTextureInfo {
-                texture: &milkyway,
-                mip_level: 0,
-                origin: wgpu::Origin3d::ZERO,
-                aspect: wgpu::TextureAspect::All,
-            },
-            // The actual pixel data
-            &milkyway_rgba,
-            // The layout of the texture
-            wgpu::TexelCopyBufferLayout {
-                offset: 0,
-                bytes_per_row: Some(4 * milkyway_dims.0),
-                rows_per_image: Some(milkyway_dims.1),
-            },
-            wgpu::Extent3d {
-                width: milkyway_dims.0,
-                height: milkyway_dims.1,
-                depth_or_array_layers: 1,
-            },
-        );
+            gfx.queue.write_texture(
+                // Tells wgpu where to copy the pixel data
+                wgpu::TexelCopyTextureInfo {
+                    texture: &milkyway,
+                    mip_level: 0,
+                    origin: wgpu::Origin3d::ZERO,
+                    aspect: wgpu::TextureAspect::All,
+                },
+                // The actual pixel data
+                &milkyway_rgba,
+                // The layout of the texture
+                wgpu::TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some(4 * milkyway_dims.0),
+                    rows_per_image: Some(milkyway_dims.1),
+                },
+                wgpu::Extent3d {
+                    width: milkyway_dims.0,
+                    height: milkyway_dims.1,
+                    depth_or_array_layers: 1,
+                },
+            );
+
+            assets
+                .textures
+                .insert("milkyway_panorama".to_string(), milkyway);
+        }
+
+        let milkyway = assets.textures.get("milkyway_panorama").unwrap().clone();
 
         let milkyway_view = milkyway.create_view(&Default::default());
 
@@ -626,21 +639,30 @@ impl StandardPipeline {
             encoder,
             &self.spheres_buffer,
             0,
-            ((size_of::<SphereDesc>() * self.spheres_host.len()) as u64)
+            ((size_of::<SphereDesc>() * self.spheres_host.len()).max(size_of::<SphereDesc>())
+                as u64)
                 .try_into()
                 .unwrap(),
         );
-        uniform.copy_from_slice(bytemuck::cast_slice(&self.spheres_host));
+        if self.spheres_host.len() > 0 {
+            uniform.copy_from_slice(bytemuck::cast_slice(&self.spheres_host));
+        } else {
+            uniform.fill(0);
+        }
 
         let mut uniform = staging_belt.write_buffer(
             encoder,
             &self.stars_buffer,
             0,
-            ((size_of::<StarDesc>() * self.stars_host.len()) as u64)
+            ((size_of::<StarDesc>() * self.stars_host.len()).max(size_of::<StarDesc>()) as u64)
                 .try_into()
                 .unwrap(),
         );
-        uniform.copy_from_slice(bytemuck::cast_slice(&self.stars_host));
+        if self.stars_host.len() > 0 {
+            uniform.copy_from_slice(bytemuck::cast_slice(&self.stars_host));
+        } else {
+            uniform.fill(0);
+        }
     }
 
     pub fn render(
