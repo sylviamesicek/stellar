@@ -1,7 +1,7 @@
 use core::f32;
 use std::time::Duration;
 
-use egui::epaint::ViewportInPixels;
+use egui::{ecolor, epaint::ViewportInPixels};
 
 use crate::{
     components::{Camera, Global, PanOrbitController, Pipeline, Star},
@@ -367,6 +367,14 @@ impl SpaceState {
     }
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum BlackHole2dCurvature {
+    #[default]
+    Flat,
+    FauxNewtonian,
+    Schwarschild,
+}
+
 pub struct BlackHole2dState {
     eye_fov: f64,
     eye_position: [f64; 2],
@@ -374,6 +382,10 @@ pub struct BlackHole2dState {
 
     ray_count: u64,
     ray_distance: f64,
+    ray_colors: bool,
+
+    black_hole_mass: f64,
+    black_hole_curvature: BlackHole2dCurvature,
 }
 
 impl BlackHole2dState {
@@ -384,6 +396,9 @@ impl BlackHole2dState {
             eye_angle: 0.0,
             ray_count: 10,
             ray_distance: 0.0,
+            ray_colors: false,
+            black_hole_mass: 1.0,
+            black_hole_curvature: BlackHole2dCurvature::Flat,
         }
     }
 
@@ -396,6 +411,34 @@ impl BlackHole2dState {
     pub fn ui(&mut self, _world: &mut hecs::World, ui: &mut egui::Ui, _screen: [u32; 2]) {
         egui::Panel::left("space_left_panel").show_inside(ui, |ui| {
             ui.heading("Black Hole 2d Demo");
+
+            ui.horizontal(|ui| {
+                ui.label("Curvature: ");
+                egui::containers::ComboBox::from_id_salt("black_hole_2d_box")
+                    .selected_text(format!("{:?}", self.black_hole_curvature))
+                    .show_ui(ui, |ui| {
+                        ui.selectable_value(
+                            &mut self.black_hole_curvature,
+                            BlackHole2dCurvature::Flat,
+                            "Flat",
+                        );
+                        ui.selectable_value(
+                            &mut self.black_hole_curvature,
+                            BlackHole2dCurvature::Schwarschild,
+                            "Schwarschild",
+                        );
+                        ui.selectable_value(
+                            &mut self.black_hole_curvature,
+                            BlackHole2dCurvature::FauxNewtonian,
+                            "Faux Newtonian",
+                        );
+                    });
+            });
+
+            ui.add(
+                egui::Slider::new(&mut self.black_hole_mass, 0.0..=10.0).text("Black Hole Mass"),
+            );
+            ui.heading("Eye Settings");
             ui.add(egui::Slider::new(&mut self.eye_fov, 30.0..=90.0).text("Eye FOV"));
             ui.add(
                 egui::Slider::new(&mut self.eye_angle, 0.0..=360.0)
@@ -403,9 +446,17 @@ impl BlackHole2dState {
                     .clamping(egui::SliderClamping::Never),
             );
 
-            ui.heading("Raymarching");
+            ui.heading("Ray Settings");
             ui.add(egui::Slider::new(&mut self.ray_count, 4..=100).text("Ray Count"));
-            ui.add(egui::Slider::new(&mut self.ray_distance, 0.0..=20.0).text("Ray Distance"))
+            ui.add(egui::Slider::new(&mut self.ray_distance, 0.0..=20.0).text("Ray Distance"));
+            let color_response = ui.add(
+                egui::Button::new("Color Mode")
+                    .selected(self.ray_colors)
+                    .frame(true),
+            );
+            if color_response.clicked() {
+                self.ray_colors = !self.ray_colors;
+            }
 
             // ui.add(egui::Slider::new(&mut self.eye_angle, -5.0..=5.0));
             // ui.add(egui::Slider::new(&mut transform.translation[2], 0.0..=10.0));
@@ -436,6 +487,8 @@ impl BlackHole2dState {
                             .default_x_bounds(-10.0, 10.0)
                             .auto_bounds(false)
                             .data_aspect(1.0)
+                            .show_x(false)
+                            .show_y(false)
                             // .view_aspect(1.0)
                             .show(ui, |plot_ui| {
                                 let ui_points_per_unit = plot_ui.transform().dpos_dvalue_x() as f32;
@@ -560,9 +613,20 @@ impl BlackHole2dState {
                                             ray_end.to_array(),
                                         ]);
 
+                                        let color = if self.ray_colors {
+                                            ecolor::Hsva::new(
+                                                (i - 1) as f32 / self.ray_count as f32,
+                                                1.0,
+                                                1.0,
+                                                1.0,
+                                            )
+                                            .into()
+                                        } else {
+                                            egui::Color32::RED
+                                        };
+
                                         plot_ui.line(
-                                            egui_plot::Line::new("ray", ray_points)
-                                                .color(egui::Color32::RED),
+                                            egui_plot::Line::new("ray", ray_points).color(color),
                                         );
                                     }
                                 }
