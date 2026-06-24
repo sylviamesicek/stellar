@@ -139,7 +139,7 @@ impl App {
 
         // Draw individual state ui
         match self.state {
-            State::BlackHole2d => self.black_hole_2d.ui(world, ui, screen),
+            State::BlackHole2d => self.black_hole_2d.ui(world, ui, screen, delta_time),
             State::Fractal => self.fractal.ui(world, ui, screen),
             State::Space => self.space.ui(world, ui, screen),
         }

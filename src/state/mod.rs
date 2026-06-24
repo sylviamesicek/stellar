@@ -460,10 +460,18 @@ impl RayPosition {
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum BlackHole2dCurvature {
+enum BlackHole2dCurvature {
     #[default]
     Flat,
     Schwarschild,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+enum TemporalMode {
+    #[default]
+    Full,
+    Manual,
+    Interactive,
 }
 
 pub struct BlackHole2dState {
@@ -472,7 +480,8 @@ pub struct BlackHole2dState {
     eye_angle: f64,
 
     ray_count: u64,
-    ray_distance: f64,
+    // ray_distance: f64,
+    ray_time: f64,
     ray_colors: bool,
 
     black_hole_mass: f64,
@@ -480,6 +489,10 @@ pub struct BlackHole2dState {
 
     ray_positions: Vec<RayPosition>,
     ray_positions_offsets: Vec<usize>,
+
+    time: f64,
+    time_speed: f64,
+    time_mode: TemporalMode,
 }
 
 impl BlackHole2dState {
@@ -489,13 +502,18 @@ impl BlackHole2dState {
             eye_position: [-10.0, 0.0],
             eye_angle: 0.0,
             ray_count: 10,
-            ray_distance: 1.0,
+            // ray_distance: 100.0,
+            ray_time: 1.0,
             ray_colors: false,
             black_hole_mass: 1.0,
             black_hole_curvature: BlackHole2dCurvature::default(),
 
             ray_positions: Vec::new(),
             ray_positions_offsets: Vec::new(),
+
+            time: 0.0,
+            time_speed: 1.0,
+            time_mode: TemporalMode::default(),
         }
     }
 
@@ -505,13 +523,19 @@ impl BlackHole2dState {
 
     pub fn update(&mut self, _world: &mut hecs::World, _delta_time: Duration) {}
 
-    pub fn ui(&mut self, _world: &mut hecs::World, ui: &mut egui::Ui, _screen: [u32; 2]) {
+    pub fn ui(
+        &mut self,
+        _world: &mut hecs::World,
+        ui: &mut egui::Ui,
+        _screen: [u32; 2],
+        delta_time: Duration,
+    ) {
         // For detecting changes in settings
         let black_hole_mass = self.black_hole_mass;
         let eye_fov = self.eye_fov;
         let eye_angle = self.eye_angle;
         let ray_count = self.ray_count;
-        let ray_distance = self.ray_distance;
+        let ray_time = self.ray_time;
 
         egui::Panel::left("space_left_panel").show_inside(ui, |ui| {
             ui.heading("Black Hole 2d Demo");
@@ -537,6 +561,16 @@ impl BlackHole2dState {
             ui.add(
                 egui::Slider::new(&mut self.black_hole_mass, 0.0..=10.0).text("Black Hole Mass"),
             );
+
+            let color_response = ui.add(
+                egui::Button::new("Color Mode")
+                    .selected(self.ray_colors)
+                    .frame(true),
+            );
+            if color_response.clicked() {
+                self.ray_colors = !self.ray_colors;
+            }
+
             ui.heading("Eye Settings");
             ui.add(egui::Slider::new(&mut self.eye_fov, 30.0..=90.0).text("Eye FOV"));
             ui.add(
@@ -547,14 +581,36 @@ impl BlackHole2dState {
 
             ui.heading("Ray Settings");
             ui.add(egui::Slider::new(&mut self.ray_count, 4..=100).text("Ray Count"));
-            ui.add(egui::Slider::new(&mut self.ray_distance, 0.0..=100.0).text("Ray Distance"));
-            let color_response = ui.add(
-                egui::Button::new("Color Mode")
-                    .selected(self.ray_colors)
-                    .frame(true),
-            );
-            if color_response.clicked() {
-                self.ray_colors = !self.ray_colors;
+            ui.add(egui::Slider::new(&mut self.ray_time, 0.0..=100.0).text("Max Ray Time"));
+            // ui.add(egui::Slider::new(&mut self.ray_distance, 0.0..=100.0).text("Max Ray Distance"));
+
+            ui.horizontal(|ui| {
+                ui.label("Temporal Mode:");
+                egui::containers::ComboBox::from_id_salt("black_hole_2d_temporal_mode")
+                    .selected_text(format!("{:?}", self.time_mode))
+                    .show_ui(ui, |ui| {
+                        ui.selectable_value(&mut self.time_mode, TemporalMode::Full, "Full");
+                        ui.selectable_value(
+                            &mut self.time_mode,
+                            TemporalMode::Interactive,
+                            "Interative",
+                        );
+                        ui.selectable_value(&mut self.time_mode, TemporalMode::Manual, "Manual");
+                    });
+            });
+            match self.time_mode {
+                TemporalMode::Full => {}
+                TemporalMode::Manual => {
+                    ui.add(egui::Slider::new(&mut self.time, 0.0..=self.ray_time).text("Time"));
+                }
+                TemporalMode::Interactive => {
+                    ui.add(
+                        egui::Slider::new(&mut self.time_speed, 0.0..=10.0).text("Temporal Speed"),
+                    );
+                    if ui.add(egui::Button::new("Reset").frame(true)).clicked() {
+                        self.time = 0.0;
+                    }
+                }
             }
         });
 
@@ -563,12 +619,12 @@ impl BlackHole2dState {
         let black_hole_radius = 2.0 * self.black_hole_mass;
         let black_hole_center = glam::DVec2::ZERO;
 
-        // DO we have to recast rays?
+        // Do we have to recast rays?
         let recast = black_hole_mass != self.black_hole_mass
             || eye_fov != self.eye_fov
             || eye_angle != self.eye_angle
             || ray_count != self.ray_count
-            || ray_distance != self.ray_distance
+            || ray_time != self.ray_time
             || self.ray_positions.len() == 0;
 
         if recast && self.black_hole_curvature == BlackHole2dCurvature::Schwarschild {
@@ -619,7 +675,7 @@ impl BlackHole2dState {
 
                 self.ray_positions.push(RayPosition::from_ray(&ray, t));
 
-                while ray[4] < self.ray_distance && ray_r > black_hole_radius * 1.001 {
+                while t <= self.ray_time && ray_r > black_hole_radius * 1.001 {
                     let dt_step = integrator
                         .step(&ADMSchwarschild(self.black_hole_mass), t, &mut ray, dt)
                         .unwrap();
@@ -635,6 +691,17 @@ impl BlackHole2dState {
 
             log::info!("Schwarschild Ray Positions: {}", self.ray_positions.len());
         }
+
+        match self.time_mode {
+            TemporalMode::Full => self.time = self.ray_time,
+            TemporalMode::Interactive => {
+                if self.ray_time > 0.0 {
+                    self.time += self.time_speed * delta_time.as_secs_f64();
+                    self.time = self.time % self.ray_time;
+                }
+            }
+            TemporalMode::Manual => {}
+        };
 
         // Draw central viewport
         egui::CentralPanel::default()
@@ -733,10 +800,10 @@ impl BlackHole2dState {
 
                                 // Plot Rays
 
-                                if self.ray_distance > 0.0 {
+                                if self.ray_time > 0.0 {
                                     let dtheta = self.eye_fov / (self.ray_count + 1) as f64;
                                     let ray_start = eye_size * 0.80;
-                                    let ray_end = eye_size * 0.80 + self.ray_distance;
+                                    let ray_end = eye_size * 0.80 + self.time;
 
                                     for i in 1..=self.ray_count {
                                         let angle = (dtheta * i as f64 - self.eye_fov / 2.0
@@ -784,14 +851,55 @@ impl BlackHole2dState {
 
                                         // If curvature isn't flat use ray integration.
                                         if self.black_hole_curvature != BlackHole2dCurvature::Flat {
-                                            ray_points = egui_plot::PlotPoints::from(
-                                                self.ray_positions[self.ray_positions_offsets
-                                                    [(i - 1) as usize]
-                                                    ..self.ray_positions_offsets[i as usize]]
-                                                    .iter()
-                                                    .map(|ray| [ray.x, ray.y])
-                                                    .collect::<Vec<_>>(),
-                                            );
+                                            let positions = &self.ray_positions[self
+                                                .ray_positions_offsets
+                                                [(i - 1) as usize]
+                                                ..self.ray_positions_offsets[i as usize]];
+
+                                            let mut points = Vec::new();
+
+                                            // First index which passes predicate
+                                            #[allow(unused_assignments)]
+                                            let mut last_index = 0;
+
+                                            for (i, pos) in positions.iter().enumerate() {
+                                                if pos.time <= self.time {
+                                                    points.push([pos.x, pos.y]);
+                                                    last_index = i;
+                                                } else {
+                                                    break;
+                                                }
+                                            }
+
+                                            if last_index + 1 < positions.len() {
+                                                let source = glam::DVec2::from_array([
+                                                    positions[last_index].x,
+                                                    positions[last_index].y,
+                                                ]);
+                                                let source_time = positions[last_index].time;
+                                                let target = glam::DVec2::from_array([
+                                                    positions[last_index + 1].x,
+                                                    positions[last_index + 1].y,
+                                                ]);
+                                                let target_time = positions[last_index + 1].time;
+
+                                                debug_assert!(
+                                                    source_time <= self.time
+                                                        && target_time >= self.time
+                                                );
+
+                                                let v = source.lerp(
+                                                    target,
+                                                    (self.time - source_time)
+                                                        / (target_time - source_time),
+                                                );
+
+                                                if !v.is_nan() {
+                                                    points.push(v.to_array());
+                                                }
+                                            }
+
+                                            ray_points = egui_plot::PlotPoints::from(points);
                                         }
 
                                         let color = if self.ray_colors {
