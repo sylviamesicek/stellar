@@ -16,6 +16,7 @@ glam = { version = "0.32.0", features = ["bytemuck", "serde"] }
 hecs = { version = "0.11.0", features = ["macros"] }
 image = { version = "0.25.10", features = ["png", "jpeg"] }
 log = "0.4.29"
+peroxide = "0.41.2"
 pollster = "0.4.0"
 ron = "0.12.0"
 serde = { version = "1.0.228", features = ["derive"] }

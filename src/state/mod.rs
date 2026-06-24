@@ -2,6 +2,7 @@ use core::f32;
 use std::time::Duration;
 
 use egui::{ecolor, epaint::ViewportInPixels};
+use peroxide::fuga::{ODEIntegrator, ODEProblem, RKF45};
 
 use crate::{
     components::{Camera, Global, PanOrbitController, Pipeline, Star},
@@ -367,11 +368,101 @@ impl SpaceState {
     }
 }
 
+// /// ODE for motion under Newtonian Gravity for a point mass of the given mass (measured in G = 1 units).
+// ///
+// /// Indices for ODEProblem are
+// /// 0..1: Position
+// /// 2..3: Velocity
+// /// 2: Arc Length
+// struct NewtonianGravity(f64);
+
+struct ADMSchwarschild(f64);
+
+impl ODEProblem for ADMSchwarschild {
+    fn rhs(&self, t: f64, y: &[f64], dy: &mut [f64]) -> peroxide::prelude::anyhow::Result<()> {
+        let rs = 2.0 * self.0;
+
+        let (r, _phi) = (y[0], y[1]);
+        let (ur, uphi) = (y[2], y[3]);
+
+        // Common schwarschild factor
+        let f1 = 1.0 - rs / r;
+        // Lapse
+        let _alpha = f1.sqrt();
+        // Time component of (contravariant) velocity.
+        let u0 = (ur * ur + uphi * uphi / (r * r)).sqrt();
+
+        let dr = f1 * ur / u0;
+        let dphi = f1 * r.powi(-2) * uphi / u0;
+
+        let dur = -u0 * rs / (2.0 * r * r)
+            - ur.powi(2) / (2.0 * u0) * (rs / r.powi(2))
+            - uphi.powi(2) / (2.0 * u0) * ((3.0 * rs / r.powi(4)) - 2.0 / r.powi(3));
+
+        let duphi = 0.0;
+
+        let dl = (f1 * (ur * ur + uphi * uphi / r.powi(2))).sqrt();
+
+        dy[0] = dr;
+        dy[1] = dphi;
+        dy[2] = dur;
+        dy[3] = duphi;
+        dy[4] = dl;
+
+        Ok(())
+    }
+}
+
+// impl ODEProblem for NewtonianGravity {
+//     fn rhs(&self, _t: f64, y: &[f64], dy: &mut [f64]) -> peroxide::prelude::anyhow::Result<()> {
+//         let position = [y[0], y[1]];
+//         let velocity = [y[2], y[3]];
+
+//         let r = (position[0] * position[0] + position[1] * position[1]).sqrt();
+
+//         // Derivative of position is velocity
+//         dy[0] = velocity[0];
+//         dy[1] = velocity[1];
+
+//         // Velocity changes according to law of gravitation
+//         dy[2] = -self.0 * position[0] / (r * r * r);
+//         dy[3] = -self.0 * position[1] / (r * r * r);
+
+//         // Arc length is integrated mag of velocity
+//         dy[4] = (velocity[0] * velocity[0] + velocity[1] * velocity[1]).sqrt();
+
+//         Ok(())
+//     }
+// }
+
+#[derive(Debug, Clone, Copy)]
+struct RayPosition {
+    x: f64,
+    y: f64,
+    time: f64,
+    /// Arc length along ray
+    length: f64,
+}
+
+impl RayPosition {
+    fn from_ray(ray: &[f64], time: f64) -> Self {
+        let r = ray[0];
+        let phi = ray[1];
+        let length = ray[4];
+
+        Self {
+            x: r * phi.cos(),
+            y: r * phi.sin(),
+            time,
+            length,
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum BlackHole2dCurvature {
     #[default]
     Flat,
-    FauxNewtonian,
     Schwarschild,
 }
 
@@ -386,19 +477,25 @@ pub struct BlackHole2dState {
 
     black_hole_mass: f64,
     black_hole_curvature: BlackHole2dCurvature,
+
+    ray_positions: Vec<RayPosition>,
+    ray_positions_offsets: Vec<usize>,
 }
 
 impl BlackHole2dState {
     pub fn new() -> Self {
         Self {
             eye_fov: 60.0,
-            eye_position: [-7.0, 0.0],
+            eye_position: [-10.0, 0.0],
             eye_angle: 0.0,
             ray_count: 10,
-            ray_distance: 0.0,
+            ray_distance: 1.0,
             ray_colors: false,
             black_hole_mass: 1.0,
-            black_hole_curvature: BlackHole2dCurvature::Flat,
+            black_hole_curvature: BlackHole2dCurvature::default(),
+
+            ray_positions: Vec::new(),
+            ray_positions_offsets: Vec::new(),
         }
     }
 
@@ -409,6 +506,13 @@ impl BlackHole2dState {
     pub fn update(&mut self, _world: &mut hecs::World, _delta_time: Duration) {}
 
     pub fn ui(&mut self, _world: &mut hecs::World, ui: &mut egui::Ui, _screen: [u32; 2]) {
+        // For detecting changes in settings
+        let black_hole_mass = self.black_hole_mass;
+        let eye_fov = self.eye_fov;
+        let eye_angle = self.eye_angle;
+        let ray_count = self.ray_count;
+        let ray_distance = self.ray_distance;
+
         egui::Panel::left("space_left_panel").show_inside(ui, |ui| {
             ui.heading("Black Hole 2d Demo");
 
@@ -427,11 +531,6 @@ impl BlackHole2dState {
                             BlackHole2dCurvature::Schwarschild,
                             "Schwarschild",
                         );
-                        ui.selectable_value(
-                            &mut self.black_hole_curvature,
-                            BlackHole2dCurvature::FauxNewtonian,
-                            "Faux Newtonian",
-                        );
                     });
             });
 
@@ -448,7 +547,7 @@ impl BlackHole2dState {
 
             ui.heading("Ray Settings");
             ui.add(egui::Slider::new(&mut self.ray_count, 4..=100).text("Ray Count"));
-            ui.add(egui::Slider::new(&mut self.ray_distance, 0.0..=20.0).text("Ray Distance"));
+            ui.add(egui::Slider::new(&mut self.ray_distance, 0.0..=100.0).text("Ray Distance"));
             let color_response = ui.add(
                 egui::Button::new("Color Mode")
                     .selected(self.ray_colors)
@@ -457,10 +556,85 @@ impl BlackHole2dState {
             if color_response.clicked() {
                 self.ray_colors = !self.ray_colors;
             }
-
-            // ui.add(egui::Slider::new(&mut self.eye_angle, -5.0..=5.0));
-            // ui.add(egui::Slider::new(&mut transform.translation[2], 0.0..=10.0));
         });
+
+        let eye_size = 1.0;
+        let eye_center = self.eye_position;
+        let black_hole_radius = 2.0 * self.black_hole_mass;
+        let black_hole_center = glam::DVec2::ZERO;
+
+        // DO we have to recast rays?
+        let recast = black_hole_mass != self.black_hole_mass
+            || eye_fov != self.eye_fov
+            || eye_angle != self.eye_angle
+            || ray_count != self.ray_count
+            || ray_distance != self.ray_distance
+            || self.ray_positions.len() == 0;
+
+        if recast && self.black_hole_curvature == BlackHole2dCurvature::Schwarschild {
+            let integrator = RKF45::new(1.0e-3, 0.9, 0.0, 1.0, 10000);
+
+            let dtheta = self.eye_fov / (self.ray_count + 1) as f64;
+            let ray_start = eye_size * 0.80;
+
+            self.ray_positions.clear();
+            self.ray_positions_offsets.clear();
+            self.ray_positions_offsets.push(0);
+
+            for i in 1..=self.ray_count {
+                let angle = (dtheta * i as f64 - self.eye_fov / 2.0 + self.eye_angle).to_radians();
+
+                // Start Position of ray
+                let ray_start = glam::DVec2::from([
+                    eye_center[0] + ray_start * angle.cos(),
+                    eye_center[1] + ray_start * angle.sin(),
+                ]);
+
+                let ray_x = ray_start.x;
+                let ray_y = ray_start.y;
+
+                let ray_r = (ray_x.powi(2) + ray_y.powi(2)).sqrt();
+                let ray_phi = f64::atan2(ray_y, ray_x);
+
+                // Default ray velocity (length = 1)
+                let ray_dxdt = angle.cos();
+                let ray_dydt = angle.sin();
+                // Rescale d(x, y)/dt to have length (1 - rs/r). This results in u0=1 on first step.
+                let ray_dxdt = (1.0 - black_hole_radius / ray_r) * ray_dxdt;
+                let ray_dydt = (1.0 - black_hole_radius / ray_r) * ray_dydt;
+                // Convert to polar velocities
+                let ray_drdt = ray_dxdt * ray_phi.cos() + ray_dydt * ray_phi.sin();
+                let ray_dphidt =
+                    1.0 / ray_r * (-ray_dxdt * ray_phi.sin() + ray_dydt * ray_phi.cos());
+                // Assuming u0=1 we can easily convert to covariant form.
+                let ray_ur = (1.0 - black_hole_radius / ray_r).powi(-1) * ray_drdt;
+                let ray_uphi =
+                    (1.0 - black_hole_radius / ray_r).powi(-1) * ray_r * ray_r * ray_dphidt;
+
+                let ray_arc_length = 0.0;
+
+                let mut ray = [ray_r, ray_phi, ray_ur, ray_uphi, ray_arc_length];
+                let mut t = 0.0;
+                let mut dt = 0.01;
+
+                self.ray_positions.push(RayPosition::from_ray(&ray, t));
+
+                while ray[4] < self.ray_distance && ray_r > black_hole_radius * 1.001 {
+                    let dt_step = integrator
+                        .step(&ADMSchwarschild(self.black_hole_mass), t, &mut ray, dt)
+                        .unwrap();
+
+                    t += dt;
+                    dt = dt_step;
+
+                    self.ray_positions.push(RayPosition::from_ray(&ray, t));
+                }
+
+                self.ray_positions_offsets.push(self.ray_positions.len());
+            }
+
+            log::info!("Schwarschild Ray Positions: {}", self.ray_positions.len());
+        }
 
         // Draw central viewport
         egui::CentralPanel::default()
@@ -493,8 +667,6 @@ impl BlackHole2dState {
                             .show(ui, |plot_ui| {
                                 let ui_points_per_unit = plot_ui.transform().dpos_dvalue_x() as f32;
 
-                                let eye_size = 1.0;
-                                let eye_center = self.eye_position;
                                 let eye_lower = [
                                     eye_center[0]
                                         + eye_size
@@ -549,9 +721,6 @@ impl BlackHole2dState {
                                 );
 
                                 // Plot Black Hole
-
-                                let black_hole_radius = 1.0;
-                                let black_hole_center = glam::DVec2::ZERO;
 
                                 let black_hole = egui_plot::Points::new(
                                     "black_hole",
@@ -608,10 +777,22 @@ impl BlackHole2dState {
                                             }
                                         }
 
-                                        let ray_points = egui_plot::PlotPoints::from(vec![
+                                        let mut ray_points = egui_plot::PlotPoints::from(vec![
                                             ray_start.to_array(),
                                             ray_end.to_array(),
                                         ]);
+
+                                        // If curvature isn't flat use ray integration.
+                                        if self.black_hole_curvature != BlackHole2dCurvature::Flat {
+                                            ray_points = egui_plot::PlotPoints::from(
+                                                self.ray_positions[self.ray_positions_offsets
+                                                    [(i - 1) as usize]
+                                                    ..self.ray_positions_offsets[i as usize]]
+                                                    .iter()
+                                                    .map(|ray| [ray.x, ray.y])
+                                                    .collect::<Vec<_>>(),
+                                            );
+                                        }
 
                                         let color = if self.ray_colors {
                                             ecolor::Hsva::new(
