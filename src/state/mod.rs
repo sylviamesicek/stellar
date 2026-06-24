@@ -14,6 +14,7 @@ use crate::{
 pub enum State {
     #[default]
     BlackHole2d,
+    BlackHole3d,
     Fractal,
     Space,
 }
@@ -625,7 +626,8 @@ impl BlackHole2dState {
             || eye_angle != self.eye_angle
             || ray_count != self.ray_count
             || ray_time != self.ray_time
-            || self.ray_positions.len() == 0;
+            || self.ray_positions.len() == 0
+            || self.ray_positions_offsets.len() as u64 != self.ray_count + 1;
 
         if recast && self.black_hole_curvature == BlackHole2dCurvature::Schwarschild {
             let integrator = RKF45::new(1.0e-3, 0.9, 0.0, 1.0, 10000);
@@ -923,4 +925,95 @@ impl BlackHole2dState {
                     });
             });
     }
+}
+
+pub struct BlackHole3dState {
+    camera: hecs::Entity,
+}
+
+impl BlackHole3dState {
+    pub fn new() -> Self {
+        Self {
+            camera: hecs::Entity::DANGLING,
+        }
+    }
+
+    pub fn start(&mut self, world: &mut hecs::World) {
+        self.camera = world.spawn(
+            hecs::EntityBuilder::new()
+                .add(
+                    Transform::from_xyz(-10.0, 3.5, 0.0)
+                        .looking_at(glam::Vec3::ZERO, glam::Vec3::Y),
+                )
+                .add(Camera::perspective(f32::consts::PI / 2.0, 0.1, 1000.0))
+                .add(PanOrbitController::default())
+                .build(),
+        );
+    }
+
+    pub fn finish(&mut self, world: &mut hecs::World) {
+        world.despawn(self.camera).unwrap();
+    }
+
+    pub fn update(&mut self, _world: &mut hecs::World, _delta_time: Duration) {}
+
+    pub fn ui(&mut self, world: &mut hecs::World, ui: &mut egui::Ui, screen: [u32; 2]) {
+        egui::Panel::left("black_hole_3d_left_panel").show_inside(ui, |ui| {
+            ui.heading("Black Hole 3d");
+
+            let mut global_default = Global::default();
+            let global = world
+                .query_mut::<&mut Global>()
+                .into_iter()
+                .next()
+                .unwrap_or(&mut global_default);
+            global.pipeline = Pipeline::Schwarschild;
+        });
+
+        egui::CentralPanel::default()
+            .frame(egui::Frame::NONE)
+            .show_inside(ui, |ui| {
+                egui::Frame::canvas(ui.style())
+                    .corner_radius(0)
+                    .inner_margin(0)
+                    .outer_margin(0)
+                    .stroke(egui::Stroke::NONE)
+                    .fill(egui::Color32::BLACK)
+                    .show(ui, |ui| {
+                        let (_, rect) = ui.allocate_space(ui.available_size());
+                        let viewport =
+                            ViewportInPixels::from_points(&rect, ui.pixels_per_point(), screen);
+
+                        if viewport.width_px == 0 || viewport.height_px == 0 {
+                            return;
+                        }
+                        let response = ui.interact(
+                            rect,
+                            egui::Id::new("black_hole_3d_viewport_interaction"),
+                            egui::Sense::all(),
+                        );
+
+                        if response.clicked() || response.dragged() {
+                            response.request_focus();
+                        }
+
+                        // Update Camera
+                        let mut camera = world.get::<&mut Camera>(self.camera).unwrap();
+                        camera.update(viewport.width_px as u32, viewport.height_px as u32);
+                        drop(camera);
+
+                        let mut controller =
+                            world.get::<&mut PanOrbitController>(self.camera).unwrap();
+                        controller.enabled = response.has_focus();
+                        drop(controller);
+
+                        ui.painter().add(UiCallback::new_paint_callback(
+                            rect,
+                            DrawCameraCallback::new(self.camera),
+                        ));
+                    });
+            });
+    }
+
+    // pub fn left_panel(&mut self, world: &mut hecs::World, ui: &mut egui::Ui)
 }

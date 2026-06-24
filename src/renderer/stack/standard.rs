@@ -213,10 +213,11 @@ pub struct StandardPipeline {
 
     // Skybox material
     _milkyway: wgpu::Texture,
-    _milkyway_view: wgpu::TextureView,
-    _milkyway_sampler: wgpu::Sampler,
+    milkyway_view: wgpu::TextureView,
+    milkyway_sampler: wgpu::Sampler,
     milkyway_bind_group: wgpu::BindGroup,
 
+    skybox_bind_group_layout: wgpu::BindGroupLayout,
     skybox_pipeline: wgpu::RenderPipeline,
 }
 
@@ -538,11 +539,28 @@ impl StandardPipeline {
             star_pipeline,
 
             _milkyway: milkyway,
-            _milkyway_view: milkyway_view,
-            _milkyway_sampler: milkyway_sampler,
+            milkyway_view: milkyway_view,
+            milkyway_sampler: milkyway_sampler,
             milkyway_bind_group,
             skybox_pipeline,
+            skybox_bind_group_layout,
         }
+    }
+
+    pub fn milkyway_view(&self) -> &wgpu::TextureView {
+        &self.milkyway_view
+    }
+
+    pub fn milkyway_sampler(&self) -> &wgpu::Sampler {
+        &self.milkyway_sampler
+    }
+
+    pub fn milkyway_bind_group(&self) -> &wgpu::BindGroup {
+        &self.milkyway_bind_group
+    }
+
+    pub fn skybox_bind_group_layout(&self) -> &wgpu::BindGroupLayout {
+        &self.skybox_bind_group_layout
     }
 
     pub fn resize(&mut self, gfx: &Graphics, physical_size: [u32; 2]) {

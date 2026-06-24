@@ -149,6 +149,19 @@ pub struct CompositeUniform {
     exposure: f32,
 }
 
+#[derive(Debug, Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
+#[repr(C)]
+struct SchwarschildImmediates {
+    mass: f32,
+    tolerance: f32,
+    safety_factor: f32,
+    min_step_size: f32,
+    max_step_size: f32,
+    max_adaptive_iter: i32,
+    max_steps: i32,
+    max_time: f32,
+}
+
 #[derive(Debug)]
 pub struct RenderStack {
     pub physical_size: [u32; 2],
@@ -168,6 +181,8 @@ pub struct RenderStack {
     standard_pipeline: StandardPipeline,
     // Fractal Pipelines
     fractal: [wgpu::RenderPipeline; 2],
+    // Schwarschild Pipeline
+    schwarschild: wgpu::RenderPipeline,
 
     // Bloom Manager
     bloom_pipeline: BloomPipeline,
@@ -249,6 +264,25 @@ impl RenderStack {
             .finish();
 
         // ******************************
+        // Schwarschild Pipeline
+
+        let schwarschild_shader =
+            gfx.create_shader_module("schwarschild", include_str!("../shaders/schwarschild.wgsl"));
+        let schwarschild_layout = gfx.create_pipeline_layout(
+            32,
+            &[
+                frame_data.bind_group_layout(),
+                standard_pipeline.skybox_bind_group_layout(),
+            ],
+        );
+        let schwarschild = gfx
+            .start_post_processing_pipeline(&schwarschild_shader)
+            .label("schwarschild")
+            .color_format(gfx.hdr_format)
+            .layout(&schwarschild_layout)
+            .finish();
+
+        // ******************************
         // Staging Belt
 
         let staging_belt = wgpu::util::StagingBelt::new(gfx.device.clone(), 1024);
@@ -271,6 +305,7 @@ impl RenderStack {
             composite,
 
             fractal: [mandlebulb, sierpinski],
+            schwarschild,
 
             staging_belt,
         }
@@ -378,6 +413,44 @@ impl RenderStack {
 
                 render_pass.set_pipeline(&self.fractal[fractal_index]);
                 render_pass.set_bind_group(0, self.frame_data.bind_group(), &[]);
+                render_pass.draw(0..3, 0..1);
+            }
+            Pipeline::Schwarschild => {
+                let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                        view: self.hdr.color_view(),
+                        resolve_target: None,
+                        ops: wgpu::Operations {
+                            load: wgpu::LoadOp::Clear(wgpu::Color {
+                                r: 1.0,
+                                g: 0.24,
+                                b: 0.0,
+                                a: 1.0,
+                            }),
+                            store: wgpu::StoreOp::Store,
+                        },
+                        depth_slice: None,
+                    })],
+                    depth_stencil_attachment: None,
+                    ..Default::default()
+                });
+
+                render_pass.set_pipeline(&self.schwarschild);
+                render_pass.set_bind_group(0, self.frame_data.bind_group(), &[]);
+                render_pass.set_bind_group(1, self.standard_pipeline.milkyway_bind_group(), &[]);
+                render_pass.set_immediates(
+                    0,
+                    bytemuck::cast_slice(&[SchwarschildImmediates {
+                        mass: 1.0,
+                        tolerance: 1.0e-3,
+                        safety_factor: 0.9,
+                        min_step_size: 0.00001,
+                        max_step_size: 10.0,
+                        max_adaptive_iter: 100,
+                        max_steps: 500,
+                        max_time: 100.0,
+                    }]),
+                );
                 render_pass.draw(0..3, 0..1);
             }
             Pipeline::Standard => {

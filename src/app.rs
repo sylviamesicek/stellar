@@ -10,7 +10,7 @@ use crate::components::{
 };
 use crate::math::{Projection, Transform};
 use crate::renderer::{DrawCameraCallback, UiCallback};
-use crate::state::{BlackHole2dState, FractalState, SpaceState, State};
+use crate::state::{BlackHole2dState, BlackHole3dState, FractalState, SpaceState, State};
 
 pub struct App {
     global: hecs::Entity,
@@ -18,6 +18,7 @@ pub struct App {
     state: State,
     prev_state: Option<State>,
     black_hole_2d: BlackHole2dState,
+    black_hole_3d: BlackHole3dState,
     fractal: FractalState,
     space: SpaceState,
 
@@ -45,6 +46,7 @@ impl App {
             state: State::BlackHole2d,
             prev_state: None,
             black_hole_2d: BlackHole2dState::new(),
+            black_hole_3d: BlackHole3dState::new(),
             fractal: FractalState::new(),
             space: SpaceState::new(),
 
@@ -71,6 +73,7 @@ impl App {
             State::BlackHole2d => self.black_hole_2d.start(world),
             State::Fractal => self.fractal.start(world),
             State::Space => self.space.start(world),
+            State::BlackHole3d => self.black_hole_3d.start(world),
         }
     }
 
@@ -98,6 +101,7 @@ impl App {
         // Update individual state objects
         match self.state {
             State::BlackHole2d => self.black_hole_2d.update(world, delta_time),
+            State::BlackHole3d => self.black_hole_3d.update(world, delta_time),
             State::Fractal => self.fractal.update(world, delta_time),
             State::Space => self.space.update(world, delta_time),
         }
@@ -107,6 +111,7 @@ impl App {
             egui::containers::menu::MenuBar::new().ui(ui, |ui| {
                 ui.menu_button("Simulation", |ui| {
                     ui.selectable_value(&mut self.state, State::BlackHole2d, "BlackHole2d");
+                    ui.selectable_value(&mut self.state, State::BlackHole3d, "BlackHole3d");
                     ui.selectable_value(&mut self.state, State::Fractal, "Fractal");
                     ui.selectable_value(&mut self.state, State::Space, "Space");
                 });
@@ -126,10 +131,12 @@ impl App {
                 State::Fractal => self.fractal.finish(world),
                 State::BlackHole2d => self.black_hole_2d.finish(world),
                 State::Space => self.space.finish(world),
+                State::BlackHole3d => self.black_hole_3d.finish(world),
             }
 
             match self.state {
                 State::BlackHole2d => self.black_hole_2d.start(world),
+                State::BlackHole3d => self.black_hole_3d.start(world),
                 State::Fractal => self.fractal.start(world),
                 State::Space => self.space.start(world),
             }
@@ -140,6 +147,7 @@ impl App {
         // Draw individual state ui
         match self.state {
             State::BlackHole2d => self.black_hole_2d.ui(world, ui, screen, delta_time),
+            State::BlackHole3d => self.black_hole_3d.ui(world, ui, screen),
             State::Fractal => self.fractal.ui(world, ui, screen),
             State::Space => self.space.ui(world, ui, screen),
         }
@@ -218,6 +226,7 @@ impl App {
         match self.state {
             State::Fractal => self.fractal.finish(world),
             State::BlackHole2d => self.black_hole_2d.finish(world),
+            State::BlackHole3d => self.black_hole_3d.finish(world),
             State::Space => self.space.finish(world),
         }
     }

@@ -50,6 +50,7 @@ pub enum Pipeline {
     Mandlebulb,
     Sierpinski,
     Standard,
+    Schwarschild,
 }
 
 #[derive(Clone, Debug)]
