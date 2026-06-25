@@ -1,3 +1,4 @@
+use crate::components::SchwarschildBlackHole;
 use crate::renderer::stack::standard::StandardPipeline;
 use crate::renderer::{Assets, Graphics};
 use crate::{
@@ -416,6 +417,13 @@ impl RenderStack {
                 render_pass.draw(0..3, 0..1);
             }
             Pipeline::Schwarschild => {
+                let schwarschild_default = SchwarschildBlackHole::default();
+                let schwarschild = world
+                    .query_mut::<&SchwarschildBlackHole>()
+                    .into_iter()
+                    .next()
+                    .unwrap_or(&schwarschild_default);
+
                 let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                     color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                         view: self.hdr.color_view(),
@@ -441,7 +449,7 @@ impl RenderStack {
                 render_pass.set_immediates(
                     0,
                     bytemuck::cast_slice(&[SchwarschildImmediates {
-                        mass: 1.0,
+                        mass: schwarschild.mass,
                         tolerance: 1.0e-3,
                         safety_factor: 0.9,
                         min_step_size: 0.00001,

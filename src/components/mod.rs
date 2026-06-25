@@ -299,6 +299,17 @@ impl Default for Global {
 }
 
 #[derive(Clone, Debug)]
+pub struct SchwarschildBlackHole {
+    pub mass: f32,
+}
+
+impl Default for SchwarschildBlackHole {
+    fn default() -> Self {
+        Self { mass: 1.0 }
+    }
+}
+
+#[derive(Clone, Debug)]
 pub struct Star {
     pub temperature: f32,
     pub sunspot_threshold: f32,

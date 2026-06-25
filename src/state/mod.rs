@@ -5,7 +5,7 @@ use egui::{ecolor, epaint::ViewportInPixels};
 use peroxide::fuga::{ODEIntegrator, ODEProblem, RKF45};
 
 use crate::{
-    components::{Camera, Global, PanOrbitController, Pipeline, Star},
+    components::{Camera, Global, PanOrbitController, Pipeline, SchwarschildBlackHole, Star},
     math::{Projection, Transform},
     renderer::{DrawCameraCallback, UiCallback},
 };
@@ -929,12 +929,14 @@ impl BlackHole2dState {
 
 pub struct BlackHole3dState {
     camera: hecs::Entity,
+    black_hole: hecs::Entity,
 }
 
 impl BlackHole3dState {
     pub fn new() -> Self {
         Self {
             camera: hecs::Entity::DANGLING,
+            black_hole: hecs::Entity::DANGLING,
         }
     }
 
@@ -942,17 +944,23 @@ impl BlackHole3dState {
         self.camera = world.spawn(
             hecs::EntityBuilder::new()
                 .add(
-                    Transform::from_xyz(-10.0, 3.5, 0.0)
+                    Transform::from_xyz(-20.0, 7.0, 0.0)
                         .looking_at(glam::Vec3::ZERO, glam::Vec3::Y),
                 )
                 .add(Camera::perspective(f32::consts::PI / 2.0, 0.1, 1000.0))
                 .add(PanOrbitController::default())
                 .build(),
         );
+        self.black_hole = world.spawn(
+            hecs::EntityBuilder::new()
+                .add(SchwarschildBlackHole { mass: 1.0 })
+                .build(),
+        )
     }
 
     pub fn finish(&mut self, world: &mut hecs::World) {
         world.despawn(self.camera).unwrap();
+        world.despawn(self.black_hole).unwrap();
     }
 
     pub fn update(&mut self, _world: &mut hecs::World, _delta_time: Duration) {}
@@ -968,6 +976,12 @@ impl BlackHole3dState {
                 .next()
                 .unwrap_or(&mut global_default);
             global.pipeline = Pipeline::Schwarschild;
+
+            let mut black_hole = world
+                .get::<&mut SchwarschildBlackHole>(self.black_hole)
+                .unwrap();
+
+            ui.add(egui::Slider::new(&mut black_hole.mass, 0.0..=1.0).text("Mass"));
         });
 
         egui::CentralPanel::default()
